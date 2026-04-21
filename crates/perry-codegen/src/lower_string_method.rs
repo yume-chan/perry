@@ -269,19 +269,35 @@ pub(crate) fn lower_string_method(
             Ok(blk.call(DOUBLE, "js_string_char_code_at", &[(I64, &recv_handle), (I32, &idx_i32)]))
         }
         "lastIndexOf" => {
-            if args.len() != 1 {
-                bail!("perry-codegen: String.lastIndexOf expects 1 arg, got {}", args.len());
+            if  args.is_empty() || args.len() > 2 {
+                bail!("perry-codegen: String.lastIndexOf expects 1 or 2 arg, got {}", args.len());
             }
             let needle_box = lower_expr(ctx, &args[0])?;
+            // Optional fromIndex.
+            let from_idx_double = if args.len() == 2 {
+                Some(lower_expr(ctx, &args[1])?)
+            } else {
+                None
+            };
             let blk = ctx.block();
             let recv_handle = unbox_to_i64(blk, &recv_box);
             let needle_handle = unbox_to_i64(blk, &needle_box);
-            let i32_v = blk.call(
-                I32,
-                "js_string_last_index_of",
-                &[(I64, &recv_handle), (I64, &needle_handle)],
-            );
-            Ok(blk.sitofp(I32, &i32_v, DOUBLE))
+            let result_i32 = if let Some(from_d) = from_idx_double {
+                let from_i32 = blk.fptosi(DOUBLE, &from_d, I32);
+                blk.call(
+                    I32,
+                    "js_string_last_index_of_from",
+                    &[(I64, &recv_handle), (I64, &needle_handle), (I32, &from_i32)],
+                )
+            } else {
+                blk.call(
+                    I32,
+                    "js_string_last_index_of",
+                    &[(I64, &recv_handle), (I64, &needle_handle)],
+                )
+            };
+            // i32 → double via sitofp (preserves the -1 sentinel for "not found").
+            Ok(blk.sitofp(I32, &result_i32, DOUBLE))
         }
         "padStart" | "padEnd" => {
             if args.is_empty() || args.len() > 2 {

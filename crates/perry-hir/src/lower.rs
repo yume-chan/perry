@@ -10613,7 +10613,10 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                 ast::UpdateOp::MinusMinus => BinaryOp::Sub,
             };
 
-            match update.arg.as_ref() {
+            let arg = update.arg.as_ref();
+            let arg = if let ast::Expr::TsNonNull(non_null) = arg { non_null.expr.as_ref() } else { arg };
+
+            match arg {
                 // Simple identifier: x++ or ++x
                 ast::Expr::Ident(ident) => {
                     let name = ident.sym.to_string();
@@ -10667,7 +10670,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                         }
                     }
                 }
-                _ => Err(anyhow!("Update expression only supports identifiers and member expressions")),
+                _ => Err(anyhow!("Update expression only supports identifiers and member expressions {:?}", update.arg.as_ref())),
             }
         }
         ast::Expr::Tpl(tpl) => {

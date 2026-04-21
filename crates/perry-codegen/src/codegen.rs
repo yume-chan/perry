@@ -681,6 +681,9 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         scan_body(&f.params, &f.body, &mut referenced_from_fn);
     }
     for c in &hir.classes {
+        for m in &c.static_methods {
+            scan_body(&m.params, &m.body, &mut referenced_from_fn);
+        }
         for m in &c.methods {
             scan_body(&m.params, &m.body, &mut referenced_from_fn);
         }
@@ -1126,8 +1129,26 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     // Lower each user function into the module (skip i64-specialized ones).
     for f in &hir.functions {
         if i64_specialized.contains(&f.id) { continue; }
-        compile_function(&mut llmod, f, &func_names, &mut strings, &class_table, &method_names, &module_globals, &module_global_types, &opts.import_function_prefixes, &enum_table, &static_field_globals, &class_ids, &func_signatures, &module_boxed_vars, &closure_rest_params, &cross_module)
-            .with_context(|| format!("lowering function '{}'", f.name))?;
+        compile_function(
+            &mut llmod,
+            f,
+            &func_names,
+            &mut strings,
+            &class_table,
+            &method_names,
+            &module_globals,
+            &module_global_types,
+            &opts.import_function_prefixes,
+            &enum_table,
+            &static_field_globals,
+            &class_ids,
+            &func_signatures,
+            &module_prefix,
+            &module_boxed_vars,
+            &closure_rest_params,
+            &cross_module
+        )
+        .with_context(|| format!("lowering function '{}'", f.name))?;
     }
 
     // Lower each closure body as a top-level LLVM function.
@@ -1161,8 +1182,27 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     // them directly.
     for class in &hir.classes {
         for method in &class.methods {
-            compile_method(&mut llmod, class, method, &func_names, &mut strings, &class_table, &method_names, &module_globals, &module_global_types, &opts.import_function_prefixes, &enum_table, &static_field_globals, &class_ids, &func_signatures, &module_boxed_vars, &closure_rest_params, &cross_module)
-                .with_context(|| format!("lowering method '{}::{}'", class.name, method.name))?;
+            compile_method(
+                &mut llmod,
+                class,
+                method,
+                &func_names,
+                &mut strings,
+                &class_table,
+                &method_names,
+                &module_globals,
+                &module_global_types,
+                &opts.import_function_prefixes,
+                &enum_table,
+                &static_field_globals,
+                &class_ids,
+                &func_signatures,
+                &module_prefix,
+                &module_boxed_vars,
+                &closure_rest_params,
+                &cross_module
+            )
+            .with_context(|| format!("lowering method '{}::{}'", class.name, method.name))?;
         }
         // Getters and setters are also methods, just registered under
         // a __get_/__set_ prefix in the registry. Emit their bodies
@@ -1170,14 +1210,52 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         for (prop, getter_fn) in &class.getters {
             let mut renamed = getter_fn.clone();
             renamed.name = format!("__get_{}", prop);
-            compile_method(&mut llmod, class, &renamed, &func_names, &mut strings, &class_table, &method_names, &module_globals, &module_global_types, &opts.import_function_prefixes, &enum_table, &static_field_globals, &class_ids, &func_signatures, &module_boxed_vars, &closure_rest_params, &cross_module)
-                .with_context(|| format!("lowering getter '{}::{}'", class.name, prop))?;
+            compile_method(
+                &mut llmod,
+                class,
+                &renamed,
+                &func_names,
+                &mut strings,
+                &class_table,
+                &method_names,
+                &module_globals,
+                &module_global_types,
+                &opts.import_function_prefixes,
+                &enum_table,
+                &static_field_globals,
+                &class_ids,
+                &func_signatures,
+                &module_prefix,
+                &module_boxed_vars,
+                &closure_rest_params,
+                &cross_module
+            )
+            .with_context(|| format!("lowering getter '{}::{}'", class.name, prop))?;
         }
         for (prop, setter_fn) in &class.setters {
             let mut renamed = setter_fn.clone();
             renamed.name = format!("__set_{}", prop);
-            compile_method(&mut llmod, class, &renamed, &func_names, &mut strings, &class_table, &method_names, &module_globals, &module_global_types, &opts.import_function_prefixes, &enum_table, &static_field_globals, &class_ids, &func_signatures, &module_boxed_vars, &closure_rest_params, &cross_module)
-                .with_context(|| format!("lowering setter '{}::{}'", class.name, prop))?;
+            compile_method(
+                &mut llmod,
+                class,
+                &renamed,
+                &func_names,
+                &mut strings,
+                &class_table,
+                &method_names,
+                &module_globals,
+                &module_global_types,
+                &opts.import_function_prefixes,
+                &enum_table,
+                &static_field_globals,
+                &class_ids,
+                &func_signatures,
+                &module_prefix,
+                &module_boxed_vars,
+                &closure_rest_params,
+                &cross_module
+            )
+            .with_context(|| format!("lowering setter '{}::{}'", class.name, prop))?;
         }
         // Emit standalone constructor for cross-module use.
         // Compiled like a method: takes (i64 this, double arg0, ...) → void.
@@ -1204,7 +1282,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 &mut llmod, class, &ctor_as_method, &func_names, &mut strings,
                 &class_table, &method_names, &module_globals, &module_global_types,
                 &opts.import_function_prefixes, &enum_table,
-                &static_field_globals, &class_ids, &func_signatures,
+                &static_field_globals, &class_ids, &func_signatures, &module_prefix,
                 &module_boxed_vars, &closure_rest_params, &cross_module,
             ).with_context(|| format!("lowering constructor for '{}'", class.name))?;
         }
@@ -1251,8 +1329,8 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     for f in &hir.functions {
         let original_name = func_names.get(&f.id).cloned().unwrap();
         // Wrapper signature: i64 closure_ptr + N doubles for args.
-        // Cap at 5 since js_closure_call only goes up to 5 args.
-        let arity = f.params.len().min(5);
+        // Cap at 16 since js_closure_call only goes up to 16 args.
+        let arity = f.params.len().min(16);
         let mut wrap_params: Vec<(LlvmType, String)> =
             vec![(I64, "%this_closure".to_string())];
         for i in 0..arity {
@@ -1444,6 +1522,7 @@ fn compile_function(
     static_field_globals: &HashMap<(String, String), String>,
     class_ids: &HashMap<String, u32>,
     func_signatures: &HashMap<u32, (usize, bool, bool)>,
+    module_prefix: &str,
     module_boxed_vars: &std::collections::HashSet<u32>,
     closure_rest_params: &HashMap<u32, usize>,
     cross_module: &CrossModuleCtx,
@@ -1524,6 +1603,7 @@ fn compile_function(
     );
 
     let mut ctx = FnCtx {
+        module_prefix,
         func: lf,
         locals,
         local_types,
@@ -1793,6 +1873,7 @@ fn compile_closure(
     );
 
     let mut ctx = FnCtx {
+        module_prefix,
         func: lf,
         locals,
         local_types,
@@ -1900,6 +1981,7 @@ fn compile_method(
     static_field_globals: &HashMap<(String, String), String>,
     class_ids: &HashMap<String, u32>,
     func_signatures: &HashMap<u32, (usize, bool, bool)>,
+    module_prefix: &str,
     module_boxed_vars: &std::collections::HashSet<u32>,
     closure_rest_params: &HashMap<u32, usize>,
     cross_module: &CrossModuleCtx,
@@ -1967,6 +2049,7 @@ fn compile_method(
     );
 
     let mut ctx = FnCtx {
+        module_prefix,
         func: lf,
         locals,
         local_types,
@@ -2173,6 +2256,7 @@ fn compile_module_entry(
             &hir.init, &main_boxed_vars, module_globals,
         );
         let mut ctx = FnCtx {
+            module_prefix,
             func: main,
             locals: HashMap::new(),
             local_types: HashMap::new(),
@@ -2379,6 +2463,7 @@ fn compile_module_entry(
             &hir.init, &init_boxed_vars, module_globals,
         );
         let mut ctx = FnCtx {
+            module_prefix,
             func: init_fn,
             locals: HashMap::new(),
             local_types: HashMap::new(),
@@ -2694,6 +2779,28 @@ fn compile_static_method(
         .map(|p| (DOUBLE, format!("%arg{}", p.id)))
         .collect();
 
+    {
+        // Wrapper signature: i64 closure_ptr + N doubles for args.
+        // Cap at 16 since js_closure_call only goes up to 16 args.
+        let arity = f.params.len().min(16);
+        let mut wrap_params: Vec<(LlvmType, String)> =
+            vec![(I64, "%this_closure".to_string())];
+        for i in 0..arity {
+            wrap_params.push((DOUBLE, format!("%a{}", i)));
+        }
+        let wrap_name = format!("__perry_wrap_{}", &llvm_name);
+        let wf = llmod.define_function(&wrap_name, DOUBLE, wrap_params);
+        let _ = wf.create_block("entry");
+        let blk = wf.block_mut(0).unwrap();
+        // Call the underlying function with just the arg doubles.
+        let call_args: Vec<(LlvmType, &str)> = (0..arity)
+            .map(|i| (DOUBLE, if i == 0 { "%a0" } else if i == 1 { "%a1" }
+                else if i == 2 { "%a2" } else if i == 3 { "%a3" } else { "%a4" }))
+            .collect();
+        let result = blk.call(DOUBLE, &llvm_name, &call_args);
+        blk.ret(DOUBLE, &result);
+    }
+
     let ic_base = llmod.ic_counter;
     let buffer_alias_base = llmod.buffer_alias_counter;
     let lf = llmod.define_function(&llvm_name, DOUBLE, params);
@@ -2731,12 +2838,16 @@ fn compile_static_method(
         &f.body, &static_boxed_vars, module_globals,
     );
 
+    let mut func_names = func_names.clone();
+    func_names.insert(f.id, llvm_name.clone());
+
     let mut ctx = FnCtx {
+        module_prefix,
         func: lf,
         locals,
         local_types,
         current_block: 0,
-        func_names,
+        func_names: &func_names,
         strings,
         loop_targets: Vec::new(),
         label_targets: HashMap::new(),
@@ -2809,6 +2920,7 @@ fn compile_static_method(
             ctx.block().ret(DOUBLE, "0.0");
         }
     }
+
     let ic_globals = std::mem::take(&mut ctx.ic_globals);
     let ic_end = ctx.ic_site_counter;
     let pending = std::mem::take(&mut ctx.pending_declares);

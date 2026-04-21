@@ -4406,16 +4406,18 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                                     imported_param_counts.insert(export_name.clone(), param_count);
                                 }
                                 if let Some(class) = exported_classes.get(&key) {
-                                    imported_classes.push(perry_codegen::ImportedClass {
-                                        name: class.name.clone(),
-                                        local_alias: None,
-                                        source_prefix: origin_prefix.clone(),
-                                        constructor_param_count: class.constructor.as_ref().map(|c| c.params.len()).unwrap_or(0),
-                                        method_names: class.methods.iter().map(|m| m.name.clone()).collect(),
-                                        parent_name: class.extends_name.clone(),
-                                        field_names: class.fields.iter().map(|f| f.name.clone()).collect(),
-                                        source_class_id: Some(class.id),
-                                    });
+                                  if imported_classes.iter().all(|c| c.name != class.name) {
+                                        imported_classes.push(perry_codegen::ImportedClass {
+                                            name: class.name.clone(),
+                                            local_alias: None,
+                                            source_prefix: origin_prefix.clone(),
+                                            constructor_param_count: class.constructor.as_ref().map(|c| c.params.len()).unwrap_or(0),
+                                            method_names: class.methods.iter().map(|m| m.name.clone()).collect(),
+                                            parent_name: class.extends_name.clone(),
+                                            field_names: class.fields.iter().map(|f| f.name.clone()).collect(),
+                                            source_class_id: Some(class.id),
+                                        });
+                                    }
                                 }
                                 if let Some(members) = exported_enums.get(&key) {
                                     imported_enums.push((export_name.clone(), members.clone()));
@@ -4464,16 +4466,19 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
 
                     // Imported classes
                     if let Some(class) = exported_classes.get(&key) {
-                        imported_classes.push(perry_codegen::ImportedClass {
-                            name: class.name.clone(),
-                            local_alias: if local_name != class.name { Some(local_name.clone()) } else { None },
-                            source_prefix: effective_prefix.clone(),
-                            constructor_param_count: class.constructor.as_ref().map(|c| c.params.len()).unwrap_or(0),
-                            method_names: class.methods.iter().map(|m| m.name.clone()).collect(),
-                            parent_name: class.extends_name.clone(),
-                            field_names: class.fields.iter().map(|f| f.name.clone()).collect(),
-                            source_class_id: Some(class.id),
-                        });
+                      // Namespace import and named import might bring in the same type
+                      if imported_classes.iter().all(|c| c.name != class.name) {
+                          imported_classes.push(perry_codegen::ImportedClass {
+                              name: class.name.clone(),
+                              local_alias: if local_name != class.name { Some(local_name.clone()) } else { None },
+                              source_prefix: effective_prefix.clone(),
+                              constructor_param_count: class.constructor.as_ref().map(|c| c.params.len()).unwrap_or(0),
+                              method_names: class.methods.iter().map(|m| m.name.clone()).collect(),
+                              parent_name: class.extends_name.clone(),
+                              field_names: class.fields.iter().map(|f| f.name.clone()).collect(),
+                              source_class_id: Some(class.id),
+                          });
+                        }
                     }
 
                     // Imported param counts

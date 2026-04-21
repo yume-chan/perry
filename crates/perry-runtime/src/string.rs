@@ -889,6 +889,14 @@ pub extern "C" fn js_string_index_of_from(haystack: *const StringHeader, needle:
 /// An empty needle returns the string's UTF-16 length.
 #[no_mangle]
 pub extern "C" fn js_string_last_index_of(haystack: *const StringHeader, needle: *const StringHeader) -> i32 {
+  js_string_last_index_of_from(haystack, needle, -1)
+}
+
+/// Find the last index of a substring (-1 if not found).
+/// Returns the UTF-16 code unit offset of the LAST occurrence, or -1 if not found.
+/// An empty needle returns the string's UTF-16 length.
+#[no_mangle]
+pub extern "C" fn js_string_last_index_of_from(haystack: *const StringHeader, needle: *const StringHeader, position: i32) -> i32 {
     if !is_valid_string_ptr(haystack) {
         return -1;
     }
@@ -906,13 +914,14 @@ pub extern "C" fn js_string_last_index_of(haystack: *const StringHeader, needle:
         if is_ascii_string(haystack) {
             let h_blen = (*haystack).byte_len as usize;
             if n_blen > h_blen { return -1; }
+            let end = if position == -1 { h_blen } else { h_blen.min((position as usize) + n_blen) };
             let h = std::str::from_utf8_unchecked(
                 slice::from_raw_parts(string_data(haystack), h_blen),
             );
             let n = std::str::from_utf8_unchecked(
                 slice::from_raw_parts(string_data(needle), n_blen),
             );
-            return match h.rfind(n) {
+            return match h[..end].rfind(n) {
                 Some(pos) => pos as i32,
                 None => -1,
             };
@@ -922,7 +931,8 @@ pub extern "C" fn js_string_last_index_of(haystack: *const StringHeader, needle:
     // Non-ASCII path
     let h = string_as_str(haystack);
     let n = string_as_str(needle);
-    match h.rfind(n) {
+    let byte_end = if position == -1 { h.len()} else {utf16_offset_to_byte_offset(h, position as usize)};
+    match h[..byte_end].rfind(n) {
         Some(byte_pos) => byte_offset_to_utf16_index(h, byte_pos) as i32,
         None => -1,
     }

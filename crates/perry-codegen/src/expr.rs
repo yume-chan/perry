@@ -130,6 +130,7 @@ pub(crate) fn i32_bool_to_nanbox(blk: &mut LlBlock, i32_val: &str) -> String {
 }
 /// Per-function codegen context. Held briefly during lowering, never stored.
 pub(crate) struct FnCtx<'a> {
+    pub module_prefix: &'a str,
     /// Function being built (blocks, params, registers).
     pub func: &'a mut LlFunction,
     /// Map from HIR LocalId → LLVM alloca pointer (e.g. `%r3`).
@@ -724,7 +725,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // Skip for module globals — they use global variable loads,
             // not alloca slots, and the self-append helper requires a slot.
             if matches!(ctx.local_types.get(id), Some(HirType::String))
-                && !ctx.module_globals.contains_key(id) {
+                && ctx.locals.contains_key(id) {
                 if let Expr::Binary { op: BinaryOp::Add, left, right } = value.as_ref() {
                     if let Expr::LocalGet(left_id) = left.as_ref() {
                         if left_id == id {
@@ -2663,6 +2664,92 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             Ok(new_box)
         }
 
+        Expr::ArrayPushSpread { array_id, source } => {
+          // Resolve the array storage in priority order: closure
+            // capture (slot in the closure header), local alloca slot,
+            // module-level global. The realloc-pointer write-back must
+            // go to whichever storage we read from.
+            let src_box = lower_expr(ctx, source)?;
+            let new_handle = if is_string_expr(ctx, source) {
+                // String spread: `[..."hello"]` → split into
+                // individual character strings.
+                let blk = ctx.block();
+                let src_handle = unbox_to_i64(blk, &src_box);
+                let char_arr = blk.call(
+                    I64,
+                    "js_string_to_char_array",
+                    &[(I64, &src_handle)],
+                );
+                blk.call(
+                    I64,
+                    "js_array_concat",
+                    &[(I64, &src_handle), (I64, &char_arr)],
+                )
+            } else {
+                let blk = ctx.block();
+                let src_handle = unbox_to_i64(blk, &src_box);
+                blk.call(
+                    I64,
+                    "js_array_concat",
+                    &[(I64, &src_handle), (I64, &src_handle)],
+                )
+            };
+            let blk = ctx.block();
+            let new_box = nanbox_pointer_inline(blk, &new_handle);
+            // Write back to whichever storage backs the local.
+            // Boxed var takes priority: write through the box so
+            // every closure sharing the box sees the new pointer.
+            if ctx.boxed_vars.contains(array_id) {
+                // Captured-through-closure boxed var.
+                if let Some(&capture_idx) = ctx.closure_captures.get(array_id) {
+                    let closure_ptr = ctx
+                        .current_closure_ptr
+                        .clone()
+                        .ok_or_else(|| anyhow!("ArrayPush boxed captured but no current_closure_ptr"))?;
+                    let idx_str = capture_idx.to_string();
+                    let blk = ctx.block();
+                    let cap_dbl = blk.call(
+                        DOUBLE,
+                        "js_closure_get_capture_f64",
+                        &[(I64, &closure_ptr), (I32, &idx_str)],
+                    );
+                    let box_ptr = blk.bitcast_double_to_i64(&cap_dbl);
+                    blk.call_void(
+                        "js_box_set",
+                        &[(I64, &box_ptr), (DOUBLE, &new_box)],
+                    );
+                } else if let Some(slot) = ctx.locals.get(array_id).cloned() {
+                    let blk = ctx.block();
+                    let box_dbl = blk.load(DOUBLE, &slot);
+                    let box_ptr = blk.bitcast_double_to_i64(&box_dbl);
+                    blk.call_void(
+                        "js_box_set",
+                        &[(I64, &box_ptr), (DOUBLE, &new_box)],
+                    );
+                }
+                return Ok(new_box);
+            }
+            if let Some(&capture_idx) = ctx.closure_captures.get(array_id) {
+                let closure_ptr = ctx
+                    .current_closure_ptr
+                    .clone()
+                    .ok_or_else(|| anyhow!("ArrayPush captured but no current_closure_ptr"))?;
+                let idx_str = capture_idx.to_string();
+                ctx.block().call_void(
+                    "js_closure_set_capture_f64",
+                    &[(I64, &closure_ptr), (I32, &idx_str), (DOUBLE, &new_box)],
+                );
+            } else if let Some(slot) = ctx.locals.get(array_id).cloned() {
+                ctx.block().store(DOUBLE, &new_box, &slot);
+            } else if let Some(global_name) = ctx.module_globals.get(array_id).cloned() {
+                let g_ref = format!("@{}", global_name);
+                ctx.block().store(DOUBLE, &new_box, &g_ref);
+            } else {
+                return Err(anyhow!("ArrayPushSpread({}): local not in scope", array_id));
+            }
+            Ok(new_box)
+        }
+
         // -------- Closures (Phase D.1) --------
         // `function() { ... }` / `(x) => { ... }` — allocate a closure
         // object pointing at a pre-emitted function body, populate
@@ -4462,12 +4549,13 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         // `(closure_ptr, arg0, arg1, ...)` and forwards to the
         // underlying function.
         Expr::FuncRef(id) => {
-            let func_name = ctx
+            let wrap_name = ctx
                 .func_names
                 .get(id)
-                .cloned()
-                .unwrap_or_else(|| "perry_unknown_func".to_string());
-            let wrap_name = format!("__perry_wrap_{}", func_name);
+                .map_or_else(
+                  || format!("perry_closure_{}__{}", ctx.module_prefix, id),
+                  |id| format!("__perry_wrap_{}", id)
+                );
             let blk = ctx.block();
             let wrap_ptr = format!("@{}", wrap_name);
             // js_closure_alloc(func_ptr, capture_count=0) → ClosureHeader*

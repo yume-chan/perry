@@ -735,6 +735,12 @@ fn collect_closures_in_expr(
             if let Some(r) = replacer { walk(r, seen, out); }
             walk(space, seen, out);
         }
+        Expr::MapNewFromArray(expr) => {
+            walk(expr, seen, out);
+        }
+        Expr::ArrayPushSpread { source, .. } => {
+            walk(source, seen, out);
+        }
         _ => {}
     }
 }
