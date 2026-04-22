@@ -380,6 +380,33 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
     // dispatch (Phase C.2). For PropertyGet receivers, dispatch based
     // on the receiver's static type.
     if let Expr::PropertyGet { object, property } = callee {
+        // ── Imported class / namespace static method dispatch ──
+        // `Debug.assert(cond)` is lowered as
+        // `Call { callee: PropertyGet { ExternFuncRef("Debug"), "assert" }, args }`.
+        // `Debug` has no `perry_fn_*` getter (it's a namespace/class, not a
+        // variable), so we must NOT evaluate the receiver; instead dispatch
+        // directly to `perry_static_<prefix>__Debug__assert(args)`.
+        if let Expr::ExternFuncRef { name, .. } = object.as_ref() {
+            if !ctx.imported_vars.contains(name.as_str())
+                && !ctx.namespace_imports.contains(name.as_str())
+                && ctx.classes.contains_key(name.as_str())
+            {
+                let method_key = (name.clone(), property.clone());
+                if let Some(fn_name) = ctx.methods.get(&method_key).cloned() {
+                    let mut lowered_args: Vec<String> = Vec::with_capacity(args.len());
+                    for a in args {
+                        lowered_args.push(lower_expr(ctx, a)?);
+                    }
+                    let arg_slices: Vec<(crate::types::LlvmType, &str)> =
+                        lowered_args.iter().map(|s| (DOUBLE, s.as_str())).collect();
+                    let param_types: Vec<crate::types::LlvmType> =
+                        std::iter::repeat(DOUBLE).take(lowered_args.len()).collect();
+                    ctx.pending_declares.push((fn_name.clone(), DOUBLE, param_types));
+                    return Ok(ctx.block().call(DOUBLE, &fn_name, &arg_slices));
+                }
+            }
+        }
+
         // Number.prototype.toFixed(decimals) — call js_number_to_fixed.
         // Receiver is any number-typed value; we don't gate on
         // is_numeric_expr because tests often call it on Any locals.

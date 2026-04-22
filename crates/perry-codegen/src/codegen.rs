@@ -165,8 +165,12 @@ pub struct ImportedClass {
     pub source_prefix: String,
     /// Number of constructor parameters (needed for dispatch).
     pub constructor_param_count: usize,
-    /// Method names defined on this class.
+    /// Method names defined on this class (instance methods).
     pub method_names: Vec<String>,
+    /// Static method names defined on this class (namespace static methods).
+    /// These are compiled as `perry_static_<prefix>__<Class>__<method>` in
+    /// the source module, unlike instance methods which use `perry_method_`.
+    pub static_method_names: Vec<String>,
     /// Parent class name, if any.
     pub parent_name: Option<String>,
     /// Field names in declaration order (for allocation sizing and field index mapping).
@@ -916,6 +920,23 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             llmod.declare_function(&llvm_fn, DOUBLE, &param_types);
         }
 
+        // Static methods: compiled as `perry_static_<prefix>__<Class>__<method>`
+        // in the source module (namespace classes use static_methods not methods).
+        for static_method_name in &ic.static_method_names {
+            let llvm_fn = format!(
+                "perry_static_{}__{}__{}",
+                sanitize(src),
+                sanitize(&ic.name),
+                sanitize(static_method_name),
+            );
+            method_names
+                .entry((effective_name.to_string(), static_method_name.clone()))
+                .or_insert_with(|| llvm_fn.clone());
+            let param_types: Vec<crate::types::LlvmType> =
+                std::iter::repeat(DOUBLE).take(6).collect();
+            llmod.declare_function(&llvm_fn, DOUBLE, &param_types);
+        }
+
         // Constructor: declared as
         // `<source_prefix>__<class>_constructor(i64 this, double arg0, …) → void`
         let ctor_fn = format!(
@@ -1435,11 +1456,29 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     {
         use std::collections::HashSet;
         let mut emitted_wrappers: HashSet<String> = HashSet::new();
+        // Build sets of class and enum names so we can skip generating
+        // `perry_fn_<src>__<Name>()` getter wrappers for them — those getter
+        // functions don't exist in the source module (classes/namespaces have
+        // no module-level variable storage; enums are compile-time constants).
+        // Emitting wrappers that call non-existent getters causes linker errors.
+        let imported_class_names: HashSet<&str> =
+            imported_class_stubs.iter().map(|s| s.name.as_str()).collect();
+        let imported_enum_names: HashSet<&str> =
+            opts.imported_enums.iter().map(|(n, _)| n.as_str()).collect();
         // Stable iteration order for deterministic IR output.
         let mut imports: Vec<(&String, &String)> =
             opts.import_function_prefixes.iter().collect();
         imports.sort_by(|a, b| a.0.cmp(b.0));
         for (name, source_prefix) in imports {
+            // Skip class and enum imports: they have no `perry_fn_*` getter,
+            // only `perry_static_*` methods (classes) or compile-time values
+            // (enums). The static dispatch path in lower_call.rs handles calls
+            // on these directly.
+            if imported_class_names.contains(name.as_str())
+                || imported_enum_names.contains(name.as_str())
+            {
+                continue;
+            }
             let wrapper_name =
                 format!("__perry_wrap_extern_{}__{}", source_prefix, name);
             if !emitted_wrappers.insert(wrapper_name.clone()) {

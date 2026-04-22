@@ -7322,6 +7322,19 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         .push((fname.clone(), DOUBLE, vec![]));
                     return Ok(ctx.block().call(DOUBLE, &fname, &[]));
                 }
+                // Imported CLASSES / NAMESPACES have no `perry_fn_*` getter
+                // (no module-level variable storage) and no closure global
+                // (we skip generating them in codegen.rs to avoid linker
+                // errors). When a class appears as a standalone value
+                // (truthiness check, equality test), return TAG_UNDEFINED so
+                // the call still compiles. Call sites on class members
+                // (`Debug.assert(...)`) are handled early in lower_call.rs
+                // via the static-dispatch path, so they never reach here.
+                if ctx.classes.contains_key(name.as_str())
+                    && !ctx.namespace_imports.contains(name.as_str())
+                {
+                    return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
+                }
                 let global_name = format!(
                     "__perry_extern_closure_{}__{}",
                     source_prefix, name
