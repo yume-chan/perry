@@ -4542,32 +4542,39 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
 
         // -------- FuncRef as expression value (function reference) --------
         // When a user function is passed as a value (e.g. `apply(add,
-        // 3, 4)`), wrap it in a heap closure so the receiver can call
-        // it via `js_closure_callN`. The wrapper function
-        // `__perry_wrap_<name>` is emitted by `compile_module` for
-        // every user function and has the closure-call ABI: it takes
-        // `(closure_ptr, arg0, arg1, ...)` and forwards to the
-        // underlying function.
+        // 3, 4)`), return the address of its pre-allocated static
+        // `ClosureHeader` constant (`__perry_static_closure_<name>`),
+        // emitted once per function by `compile_module`.  This makes
+        // every read of the same named function return the *same*
+        // pointer, so equality checks (`fn1 === fn2`) work correctly —
+        // calling `js_closure_alloc` on every access produced a fresh
+        // object each time, causing all equality tests to fail.
+        //
+        // The ClosureHeader points at `__perry_wrap_<name>`, which has
+        // the closure-call ABI `(i64 closure_ptr, double arg0, ...)`.
         Expr::FuncRef(id) => {
-            let wrap_name = ctx
-                .func_names
-                .get(id)
-                .map_or_else(
-                  || format!("perry_closure_{}__{}", ctx.module_prefix, id),
-                  |id| format!("__perry_wrap_{}", id)
+            if let Some(original_name) = ctx.func_names.get(id) {
+                let global_name = format!("__perry_static_closure_{}", original_name);
+                let global_ref = format!("@{}", global_name);
+                let blk = ctx.block();
+                let addr_i64 = blk.ptrtoint(&global_ref, I64);
+                Ok(nanbox_pointer_inline(blk, &addr_i64))
+            } else {
+                // Fallback (should not occur in practice): synthesize a
+                // closure on the fly.  No static global exists for
+                // functions not registered in func_names.
+                let wrap_name = format!(
+                    "perry_closure_{}__{}", ctx.module_prefix, id
                 );
-            let blk = ctx.block();
-            let wrap_ptr = format!("@{}", wrap_name);
-            // js_closure_alloc(func_ptr, capture_count=0) → ClosureHeader*
-            // The first arg is a `ptr` in LLVM IR (since the runtime
-            // takes `*const u8`). Pass `@wrap_name` directly — LLVM
-            // handles the implicit function-to-pointer cast.
-            let closure_handle = blk.call(
-                I64,
-                "js_closure_alloc",
-                &[(PTR, &wrap_ptr), (I32, "0")],
-            );
-            Ok(nanbox_pointer_inline(blk, &closure_handle))
+                let wrap_ptr = format!("@{}", wrap_name);
+                let blk = ctx.block();
+                let closure_handle = blk.call(
+                    I64,
+                    "js_closure_alloc",
+                    &[(PTR, &wrap_ptr), (I32, "0")],
+                );
+                Ok(nanbox_pointer_inline(blk, &closure_handle))
+            }
         }
 
         // -------- path.extname(p) -> string --------

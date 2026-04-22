@@ -1347,6 +1347,16 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             .collect();
         let result = blk.call(DOUBLE, &original_name, &call_args);
         blk.ret(DOUBLE, &result);
+        // Emit a static ClosureHeader constant `__perry_static_closure_<name>`
+        // so that `Expr::FuncRef(id)` can return its address rather than
+        // allocating a fresh closure object on every access.  Two reads of
+        // the same named function therefore compare equal — the
+        // JavaScript-correct behaviour.  The layout matches `perry-runtime`
+        // `ClosureHeader`: { func_ptr: *u8, capture_count: u32, type_tag: u32 }
+        // with type_tag = CLOSURE_MAGIC = 0x434C4F53 = 1129074515.
+        let static_closure_name = format!("__perry_static_closure_{}", original_name);
+        let init = format!("{{ ptr @{}, i32 0, i32 1129074515 }}", wrap_name);
+        llmod.add_internal_constant(&static_closure_name, "{ ptr, i32, i32 }", &init);
     }
 
     // Emit ExternFuncRef-as-value wrappers for every imported function in
