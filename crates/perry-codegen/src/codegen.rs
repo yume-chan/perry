@@ -941,6 +941,34 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         let returns_number = matches!(f.return_type, perry_types::Type::Number | perry_types::Type::Int32);
         func_signatures.insert(f.id, (f.params.len(), has_rest, returns_number));
     }
+    // Also register static class method IDs so that `Expr::FuncRef(id)` works
+    // for namespace functions.  TypeScript `export namespace Foo { export
+    // function bar() { ... } }` is lowered as a class with static methods
+    // (by `lower_namespace_as_class`).  The function IDs are pre-registered
+    // via `register_func` in the HIR lowering pass, so they CAN appear in
+    // `Expr::FuncRef`.  Without adding them here they are missing from
+    // `func_names` and the FuncRef codegen falls back to the
+    // `js_closure_alloc(@perry_closure_…)` path which references a function
+    // that was never defined — producing an LLVM "use of undefined value"
+    // error when compiling large TypeScript code-bases like the TypeScript
+    // compiler itself.
+    for c in &hir.classes {
+        let class_prefix = imported_class_prefix
+            .get(&c.name)
+            .unwrap_or(&module_prefix);
+        for sm in &c.static_methods {
+            let llvm_name = format!(
+                "perry_static_{}__{}__{}",
+                class_prefix,
+                sanitize(&c.name),
+                sanitize(&sm.name),
+            );
+            func_names.entry(sm.id).or_insert_with(|| llvm_name.clone());
+            let has_rest = sm.params.iter().any(|p| p.is_rest);
+            let returns_number = matches!(sm.return_type, perry_types::Type::Number | perry_types::Type::Int32);
+            func_signatures.entry(sm.id).or_insert((sm.params.len(), has_rest, returns_number));
+        }
+    }
 
     // Module-level boxed_vars: union of every per-function/method/
     // closure/module-init boxed set. We compute this once here because
@@ -1127,8 +1155,19 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     }
 
     // Lower each user function into the module (skip i64-specialized ones).
+    // Deduplicate: a namespace's non-exported inner function that shadows a
+    // module-level function of the same name shares its func_id, so the same
+    // LLVM name can appear twice in hir.functions.  LLVM rejects duplicate
+    // `define` blocks, so skip any function whose LLVM name has already been
+    // compiled.
+    let mut compiled_funcs: std::collections::HashSet<String> = std::collections::HashSet::new();
     for f in &hir.functions {
         if i64_specialized.contains(&f.id) { continue; }
+        let llvm_name = func_names.get(&f.id).cloned().unwrap_or_default();
+        if !compiled_funcs.insert(llvm_name.clone()) {
+            // Duplicate; already lowered under this name.
+            continue;
+        }
         compile_function(
             &mut llmod,
             f,
@@ -1326,8 +1365,19 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     //
     // Wrappers are emitted unconditionally for every user function;
     // dead-code elimination at link time will remove unused ones.
+    //
+    // Guard against duplicate entries in hir.functions (which can arise
+    // when a namespace's non-exported inner function shadows a module-level
+    // function of the same name — both share the same func_id and thus the
+    // same LLVM name, causing LLVM to reject the IR with "redefinition of
+    // global").  Track emitted names and skip any duplicates.
+    let mut emitted_func_wrappers: std::collections::HashSet<String> = std::collections::HashSet::new();
     for f in &hir.functions {
         let original_name = func_names.get(&f.id).cloned().unwrap();
+        if !emitted_func_wrappers.insert(original_name.clone()) {
+            // Already emitted wrapper + static closure for this name; skip.
+            continue;
+        }
         // Wrapper signature: i64 closure_ptr + N doubles for args.
         // Cap at 16 since js_closure_call only goes up to 16 args.
         let arity = f.params.len().min(16);

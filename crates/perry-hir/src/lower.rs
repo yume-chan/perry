@@ -8145,19 +8145,25 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                                     if arg_is_regex {
                                         let string_expr = lower_expr(ctx, &member.obj)?;
                                         let regex_expr = args.remove(0);
-                                        if matches!(&regex_expr, Expr::RegExp { .. }) || matches!(&regex_expr, Expr::LocalGet(_)) {
-                                            return Ok(if is_match_all {
-                                                Expr::StringMatchAll {
-                                                    string: Box::new(string_expr),
-                                                    regex: Box::new(regex_expr),
-                                                }
-                                            } else {
-                                                Expr::StringMatch {
-                                                    string: Box::new(string_expr),
-                                                    regex: Box::new(regex_expr),
-                                                }
-                                            });
-                                        }
+                                        // Accept any lowered expr as the regex operand —
+                                        // the arg has already been lowered and removed from
+                                        // `args`.  Restricting to `Expr::RegExp` or
+                                        // `Expr::LocalGet` caused a silent bug: imported
+                                        // module-level regexes come out as `Expr::GlobalGet`,
+                                        // which failed the old check and left `args` empty
+                                        // while falling through, producing "String.match
+                                        // expects 1 arg, got 0" downstream.
+                                        return Ok(if is_match_all {
+                                            Expr::StringMatchAll {
+                                                string: Box::new(string_expr),
+                                                regex: Box::new(regex_expr),
+                                            }
+                                        } else {
+                                            Expr::StringMatch {
+                                                string: Box::new(string_expr),
+                                                regex: Box::new(regex_expr),
+                                            }
+                                        });
                                     }
                                 }
                             }

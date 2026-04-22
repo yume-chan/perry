@@ -741,6 +741,37 @@ fn collect_closures_in_expr(
         Expr::ArrayPushSpread { source, .. } => {
             walk(source, seen, out);
         }
+        // Object.defineProperty(obj, key, descriptor) — the descriptor
+        // argument is typically an object literal `{ value: fn, ... }` or
+        // `{ get: fn, set: fn, ... }` that can contain closures.  Missing
+        // this arm caused "use of undefined value @perry_closure_*" errors
+        // when compiling large TypeScript codebases (e.g. TypeScript itself).
+        Expr::ObjectDefineProperty(obj, key, descriptor) => {
+            walk(obj, seen, out);
+            walk(key, seen, out);
+            walk(descriptor, seen, out);
+        }
+        Expr::ObjectGetOwnPropertyDescriptor(obj, key) => {
+            walk(obj, seen, out);
+            walk(key, seen, out);
+        }
+        Expr::ObjectGetOwnPropertyNames(o)
+        | Expr::ObjectCreate(o)
+        | Expr::ObjectFreeze(o)
+        | Expr::ObjectSeal(o)
+        | Expr::ObjectPreventExtensions(o)
+        | Expr::ObjectIsFrozen(o)
+        | Expr::ObjectIsSealed(o)
+        | Expr::ObjectIsExtensible(o)
+        | Expr::ObjectGetPrototypeOf(o)
+        | Expr::ObjectGetOwnPropertySymbols(o) => {
+            walk(o, seen, out);
+        }
+        Expr::ReflectDefineProperty { target, key, descriptor } => {
+            walk(target, seen, out);
+            walk(key, seen, out);
+            walk(descriptor, seen, out);
+        }
         _ => {}
     }
 }
