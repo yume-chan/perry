@@ -2301,6 +2301,29 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         // (which IS the NaN-boxed value for non-number fields — same bit
         // pattern, runtime callers re-interpret based on context).
         Expr::PropertyGet { object, property } => {
+            // Pattern: `ns.EnumName.MemberName` where `ns` is a namespace import
+            // and `EnumName` is an imported enum (e.g. `ts.SyntaxKind.Identifier`).
+            // Enums have no runtime object representation — they're compile-time
+            // constants. Lower directly to the enum constant value rather than
+            // trying to materialize the enum name as a runtime object (which
+            // would call a non-existent `perry_fn_...__SyntaxKind` getter).
+            if let Expr::PropertyGet { object: inner_obj, property: enum_name } = object.as_ref() {
+                if let Expr::ExternFuncRef { name: ns_name, .. } = inner_obj.as_ref() {
+                    if ctx.namespace_imports.contains(ns_name.as_str()) {
+                        let enum_key = (enum_name.clone(), property.clone());
+                        if let Some(val) = ctx.enums.get(&enum_key).cloned() {
+                            match val {
+                                perry_hir::EnumValue::Number(n) => return Ok(double_literal(n as f64)),
+                                perry_hir::EnumValue::String(s) => {
+                                    let key_idx = ctx.strings.intern(&s);
+                                    let handle_global = format!("@{}", ctx.strings.entry(key_idx).handle_global);
+                                    return Ok(ctx.block().load(DOUBLE, &handle_global));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // Scalar replacement fast path: if the receiver is a scalar-replaced
             // local, load directly from the field's alloca — no heap access.
             if let Expr::LocalGet(id) = object.as_ref() {
@@ -2348,6 +2371,17 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             if let Expr::ExternFuncRef { name, .. } = object.as_ref() {
                 if ctx.namespace_imports.contains(name) {
                     if let Some(source_prefix) = ctx.import_function_prefixes.get(property).cloned() {
+                        // If `property` is an enum name, it has no `perry_fn_*` getter —
+                        // enums are compile-time constants with no runtime object
+                        // representation. Any member access (`ts.SyntaxKind.Identifier`)
+                        // is caught earlier by the nested PropertyGet pattern above, so
+                        // this arm sees only standalone enum references (`ts.SyntaxKind`
+                        // used as a value). Return TAG_UNDEFINED to avoid an undefined-
+                        // symbol linker error.
+                        let is_enum = ctx.enums.keys().any(|(en, _)| en == property.as_str());
+                        if is_enum {
+                            return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
+                        }
                         let getter = format!("perry_fn_{}__{}", source_prefix, property);
                         ctx.pending_declares.push((getter.clone(), DOUBLE, vec![]));
                         return Ok(ctx.block().call(DOUBLE, &getter, &[]));
@@ -2363,6 +2397,30 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // object stored in the module's export global.
             if let Expr::ExternFuncRef { name, .. } = object.as_ref() {
                 if let Some(source_prefix) = ctx.import_function_prefixes.get(name).cloned() {
+                    // Enum names from named imports (`import { SyntaxKind }`)
+                    // have no getter function. Member access (`SyntaxKind.Identifier`)
+                    // is resolved to `Expr::EnumMember` in HIR lowering, so this
+                    // arm normally isn't reached. Guard here as a safety net.
+                    let is_enum = ctx.enums.keys().any(|(en, _)| en == name.as_str());
+                    if is_enum {
+                        let enum_key = (name.clone(), property.clone());
+                        if let Some(val) = ctx.enums.get(&enum_key).cloned() {
+                            match val {
+                                perry_hir::EnumValue::Number(n) => return Ok(double_literal(n as f64)),
+                                perry_hir::EnumValue::String(s) => {
+                                    let key_idx = ctx.strings.intern(&s);
+                                    let handle_global = format!("@{}", ctx.strings.entry(key_idx).handle_global);
+                                    return Ok(ctx.block().load(DOUBLE, &handle_global));
+                                }
+                            }
+                        }
+                        // Unknown member on a named-import enum: return undefined.
+                        return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
+                    }
+                    // Skip class names too — they have no getter function.
+                    if ctx.classes.contains_key(name.as_str()) {
+                        return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
+                    }
                     let getter = format!("perry_fn_{}__{}", source_prefix, name);
                     ctx.pending_declares
                         .push((getter.clone(), DOUBLE, vec![]));
@@ -7333,6 +7391,17 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 if ctx.classes.contains_key(name.as_str())
                     && !ctx.namespace_imports.contains(name.as_str())
                 {
+                    return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
+                }
+                // Similarly, imported enum names (e.g. `import { SyntaxKind }`)
+                // have no `perry_fn_*` getter and no closure global. When an enum
+                // name appears as a standalone named-import value (e.g. passed to
+                // `JSON.stringify(SyntaxKind)` or used in truthiness), return
+                // TAG_UNDEFINED. Member accesses (`SyntaxKind.Identifier`) are
+                // resolved to `EnumMember` in HIR lowering, so this arm is only
+                // reached for true standalone uses.
+                let is_enum = ctx.enums.keys().any(|(en, _)| en == name.as_str());
+                if is_enum {
                     return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
                 }
                 let global_name = format!(
