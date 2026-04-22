@@ -2809,6 +2809,13 @@ fn compile_static_method(
             .collect();
         let result = blk.call(DOUBLE, &llvm_name, &call_args);
         blk.ret(DOUBLE, &result);
+        // Emit the matching static ClosureHeader constant so that
+        // `Expr::FuncRef(id)` can return a stable pointer for this
+        // static method (same pattern as the `hir.functions` loop in
+        // `compile_module`).
+        let static_closure_name = format!("__perry_static_closure_{}", llvm_name);
+        let init = format!("{{ ptr @{}, i32 0, i32 1129074515 }}", wrap_name);
+        llmod.add_internal_constant(&static_closure_name, "{ ptr, i32, i32 }", &init);
     }
 
     let ic_base = llmod.ic_counter;
