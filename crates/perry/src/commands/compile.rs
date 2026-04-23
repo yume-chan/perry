@@ -4434,6 +4434,11 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                                 import_function_prefixes.insert(export_name.clone(), origin_prefix.clone());
 
                                 let key = (origin_path.clone(), export_name.clone());
+                                if exported_var_names.contains(&key)
+                                    && !exported_enums.contains_key(&key)
+                                {
+                                    imported_vars.insert(export_name.clone());
+                                }
                                 if let Some(&param_count) = exported_func_param_counts.get(&key) {
                                     imported_param_counts.insert(export_name.clone(), param_count);
                                 }
@@ -4469,22 +4474,22 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                         perry_hir::ImportSpecifier::Namespace { .. } => unreachable!(),
                     };
 
-                    let key = (resolved_path_str.clone(), exported_name.clone());
-
-                    // Resolve effective prefix (follow re-exports)
-                    let effective_prefix = if let Some(exports) = all_module_exports.get(&resolved_path_str) {
-                        if let Some(origin_path) = exports.get(&exported_name) {
-                            if origin_path != &resolved_path_str {
-                                compute_module_prefix(origin_path, &ctx.project_root)
-                            } else {
-                                source_prefix.clone()
-                            }
-                        } else {
-                            source_prefix.clone()
-                        }
+                    // Resolve effective origin module (follow re-exports) and
+                    // corresponding symbol prefix.
+                    let effective_origin_path = if let Some(exports) = all_module_exports.get(&resolved_path_str) {
+                        exports
+                            .get(&exported_name)
+                            .cloned()
+                            .unwrap_or_else(|| resolved_path_str.clone())
+                    } else {
+                        resolved_path_str.clone()
+                    };
+                    let effective_prefix = if effective_origin_path != resolved_path_str {
+                        compute_module_prefix(&effective_origin_path, &ctx.project_root)
                     } else {
                         source_prefix.clone()
                     };
+                    let key = (effective_origin_path.clone(), exported_name.clone());
 
                     import_function_prefixes.insert(exported_name.clone(), effective_prefix.clone());
                     if local_name != exported_name {
@@ -4493,7 +4498,9 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
 
                     // Imported variables (not functions) — ExternFuncRef-as-value
                     // should call the getter, not wrap as closure.
-                    if exported_var_names.contains(&key) {
+                    if exported_var_names.contains(&key)
+                        && !exported_enums.contains_key(&key)
+                    {
                         imported_vars.insert(exported_name.clone());
                         if local_name != exported_name {
                             imported_vars.insert(local_name.clone());

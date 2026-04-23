@@ -1788,9 +1788,49 @@ pub(crate) fn lower_private_prop(ctx: &mut LoweringContext, prop: &ast::PrivateP
     })
 }
 
-pub(crate) fn lower_block_stmt(ctx: &mut LoweringContext, block: &ast::BlockStmt) -> Result<Vec<Stmt>> {
-    let mut stmts = Vec::new();
+/// Pre-register and lower nested function declarations in a block before lowering other statements.
+/// This implements JavaScript function hoisting: all function declarations are
+/// available throughout the entire block, even before their declaration appears.
+fn pre_register_and_hoist_nested_functions(ctx: &mut LoweringContext, block: &ast::BlockStmt) -> Result<Vec<Stmt>> {
+    // First pass: pre-register all nested functions (so they can reference each other)
     for stmt in &block.stmts {
+        if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
+            if !fn_decl.function.is_generator && fn_decl.function.body.is_some() {
+                let func_name = fn_decl.ident.sym.to_string();
+                if ctx.lookup_func(&func_name).is_none() {
+                    let func_id = ctx.fresh_func();
+                    ctx.register_func(func_name, func_id);
+                }
+            }
+        }
+    }
+    
+    // Second pass: lower all nested function declarations
+    let mut hoisted_stmts = Vec::new();
+    for stmt in &block.stmts {
+        if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
+            if !fn_decl.function.is_generator && fn_decl.function.body.is_some() {
+                let func_stmts = lower_body_stmt(ctx, stmt)?;
+                hoisted_stmts.extend(func_stmts);
+            }
+        }
+    }
+    
+    Ok(hoisted_stmts)
+}
+
+pub(crate) fn lower_block_stmt(ctx: &mut LoweringContext, block: &ast::BlockStmt) -> Result<Vec<Stmt>> {
+    // First: process nested function declarations and hoist them to the beginning
+    let mut stmts = pre_register_and_hoist_nested_functions(ctx, block)?;
+    
+    // Then: process all other statements
+    for stmt in &block.stmts {
+        // Skip the function declarations we already processed
+        if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
+            if fn_decl.function.body.is_some() && !fn_decl.function.is_generator {
+                continue;
+            }
+        }
         stmts.extend(lower_body_stmt(ctx, stmt)?);
     }
     Ok(stmts)
@@ -1801,8 +1841,18 @@ pub(crate) fn lower_block_stmt(ctx: &mut LoweringContext, block: &ast::BlockStmt
 /// `var` declarations remain visible (function-scoped).
 pub(crate) fn lower_block_stmt_scoped(ctx: &mut LoweringContext, block: &ast::BlockStmt) -> Result<Vec<Stmt>> {
     let mark = ctx.push_block_scope();
-    let mut stmts = Vec::new();
+    
+    // First: process nested function declarations and hoist them to the beginning
+    let mut stmts = pre_register_and_hoist_nested_functions(ctx, block)?;
+    
+    // Then: process all other statements
     for stmt in &block.stmts {
+        // Skip the function declarations we already processed
+        if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
+            if fn_decl.function.body.is_some() && !fn_decl.function.is_generator {
+                continue;
+            }
+        }
         stmts.extend(lower_body_stmt(ctx, stmt)?);
     }
     ctx.pop_block_scope(mark);
@@ -2004,9 +2054,11 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
             }
             if fn_decl.function.body.is_some() {
                 let func_name = fn_decl.ident.sym.to_string();
-                let func_id = ctx.fresh_func();
+                // If this function was pre-registered by the pre_register_nested_functions pass,
+                // use that func_id. Otherwise, create a new one.
+                let func_id = ctx.lookup_func(&func_name).unwrap_or_else(|| ctx.fresh_func());
 
-                // Register the function name temporarily so self-recursive calls
+                // Register the function name so self-recursive calls
                 // inside the body resolve to FuncRef(func_id).
                 ctx.register_func(func_name.clone(), func_id);
 

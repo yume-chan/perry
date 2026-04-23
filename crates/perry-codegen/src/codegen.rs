@@ -1435,122 +1435,17 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         // with type_tag = CLOSURE_MAGIC = 0x434C4F53 = 1129074515.
         let static_closure_name = format!("__perry_static_closure_{}", original_name);
         let init = format!("{{ ptr @{}, i32 0, i32 1129074515 }}", wrap_name);
-        llmod.add_internal_constant(&static_closure_name, "{ ptr, i32, i32 }", &init);
+        llmod.add_raw_global(format!(
+            "@{} = constant {{ ptr, i32, i32 }} {}",
+            static_closure_name, init
+        ));
     }
 
-    // Emit ExternFuncRef-as-value wrappers for every imported function in
-    // `opts.import_function_prefixes`. Each gets a thin wrapper plus a
-    // static `ClosureHeader` so the value can be passed as a callback,
-    // stored in a variable, or used in a truthiness / equality check —
-    // all the things you can do with a regular closure pointer.
-    //
-    // The wrappers are `internal` linkage so multiple modules can each
-    // emit their own copy without colliding at link time. Dead-code
-    // elimination strips wrappers for externs that are never referenced
-    // as values.
-    //
-    // Why this exists: when an imported function appears as a STANDALONE
-    // value (`if (this.ffi.setCursors)` capability check, `arr.forEach(
-    // importedFn)` callback, or `someFn === otherFn` reference equality),
-    // the lowering needs *some* JSValue to thread through. The previous
-    // pragmatic fix returned `TAG_TRUE` — correct for truthiness but it
-    // would crash at runtime the moment anything called the value via
-    // `js_closure_callN` (the runtime would dereference garbage from
-    // the function pointer's prefix bytes looking for a `ClosureHeader`).
-    // The static-ClosureHeader approach makes those calls actually work:
-    // `get_valid_func_ptr` reads `type_tag` at offset 12, sees
-    // `CLOSURE_MAGIC = 0x434C4F53 ("CLOS")`, and dispatches to the
-    // wrapper, which forwards the args to `perry_fn_<src>__<name>`.
-    {
-        use std::collections::HashSet;
-        let mut emitted_wrappers: HashSet<String> = HashSet::new();
-        // Build sets of class and enum names so we can skip generating
-        // `perry_fn_<src>__<Name>()` getter wrappers for them — those getter
-        // functions don't exist in the source module (classes/namespaces have
-        // no module-level variable storage; enums are compile-time constants).
-        // Emitting wrappers that call non-existent getters causes linker errors.
-        let imported_class_names: HashSet<&str> =
-            imported_class_stubs.iter().map(|s| s.name.as_str()).collect();
-        let imported_enum_names: HashSet<&str> =
-            opts.imported_enums.iter().map(|(n, _)| n.as_str()).collect();
-        // Stable iteration order for deterministic IR output.
-        let mut imports: Vec<(&String, &String)> =
-            opts.import_function_prefixes.iter().collect();
-        imports.sort_by(|a, b| a.0.cmp(b.0));
-        for (name, source_prefix) in imports {
-            // Skip class and enum imports: they have no `perry_fn_*` getter,
-            // only `perry_static_*` methods (classes) or compile-time values
-            // (enums). The static dispatch path in lower_call.rs handles calls
-            // on these directly.
-            if imported_class_names.contains(name.as_str())
-                || imported_enum_names.contains(name.as_str())
-            {
-                continue;
-            }
-            let wrapper_name =
-                format!("__perry_wrap_extern_{}__{}", source_prefix, name);
-            if !emitted_wrappers.insert(wrapper_name.clone()) {
-                continue;
-            }
-            let target_name = format!("perry_fn_{}__{}", source_prefix, name);
-            // Look up the param count from the import metadata. Fall back
-            // to 0 if missing — emits a no-arg wrapper, which is wrong
-            // for nonzero-arity functions but won't break compilation.
-            // (Read from `cross_module.imported_func_param_counts` rather
-            // than `opts.imported_func_param_counts` because the latter
-            // was moved into `cross_module` earlier in this function.)
-            let param_count = cross_module
-                .imported_func_param_counts
-                .get(name)
-                .copied()
-                .unwrap_or(0);
-            // Make sure the target is declared. The lazy-declares path
-            // in `lower_call.rs::ExternFuncRef` only fires when the
-            // function is actually CALLED — if it's only referenced as
-            // a value, the declare would be missing without this.
-            let param_types: Vec<crate::types::LlvmType> =
-                std::iter::repeat(DOUBLE).take(param_count).collect();
-            llmod.declare_function(&target_name, DOUBLE, &param_types);
-            // Wrapper: `define internal double @__perry_wrap_extern_<src>__<name>(
-            //              i64 %this_closure, double %a0, …, double %aN-1)`
-            // discards the closure pointer and forwards the doubles to
-            // `perry_fn_<src>__<name>`.
-            let mut wrap_params: Vec<(LlvmType, String)> =
-                Vec::with_capacity(param_count + 1);
-            wrap_params.push((I64, "%this_closure".to_string()));
-            for i in 0..param_count {
-                wrap_params.push((DOUBLE, format!("%a{}", i)));
-            }
-            let wf = llmod.define_function(&wrapper_name, DOUBLE, wrap_params);
-            wf.linkage = "internal".to_string();
-            let _ = wf.create_block("entry");
-            let blk = wf.block_mut(0).unwrap();
-            let arg_names: Vec<String> =
-                (0..param_count).map(|i| format!("%a{}", i)).collect();
-            let call_args: Vec<(LlvmType, &str)> =
-                arg_names.iter().map(|s| (DOUBLE, s.as_str())).collect();
-            let result = blk.call(DOUBLE, &target_name, &call_args);
-            blk.ret(DOUBLE, &result);
-            // Static `ClosureHeader` global pointing at the wrapper.
-            // Layout matches `crates/perry-runtime/src/closure.rs`:
-            //   { *const u8 func_ptr (8 bytes),
-            //     u32 capture_count (4 bytes),
-            //     u32 type_tag      (4 bytes) }
-            // The runtime's `get_valid_func_ptr` reads `type_tag` at
-            // offset 12 and validates against `CLOSURE_MAGIC = 0x434C4F53`
-            // ("CLOS" in ASCII = 1129074515 decimal). If the magic doesn't
-            // match, the call fast-paths to `undefined` instead of
-            // dispatching, so any non-closure value passed where a closure
-            // is expected fails closed rather than crashing.
-            let global_name =
-                format!("__perry_extern_closure_{}__{}", source_prefix, name);
-            let init = format!(
-                "{{ ptr @{}, i32 0, i32 1129074515 }}",
-                wrapper_name
-            );
-            llmod.add_internal_constant(&global_name, "{ ptr, i32, i32 }", &init);
-        }
-    }
+    // ExternFuncRef-as-value now reuses the source module's existing
+    // static function closure globals:
+    //   @__perry_static_closure_perry_fn_<src_prefix>__<name>
+    // Importing modules no longer synthesize local `__perry_wrap_extern_*`
+    // and `__perry_extern_closure_*` thunks.
 
     // Emit either `int main()` (entry module) or `void <prefix>__init()`
     // (non-entry module). The entry main calls each non-entry init in
@@ -1746,6 +1641,7 @@ fn compile_function(
         imported_func_param_counts: &cross_module.imported_func_param_counts,
         imported_func_return_types: &cross_module.imported_func_return_types,
         pending_declares: Vec::new(),
+        pending_external_globals: Vec::new(),
         integer_locals: &integer_locals,
         arena_state_slot: None,
         class_keys_slots: HashMap::new(),
@@ -1793,12 +1689,16 @@ fn compile_function(
     let ic_globals = std::mem::take(&mut ctx.ic_globals);
     let ic_end = ctx.ic_site_counter;
     let pending = std::mem::take(&mut ctx.pending_declares);
+    let pending_globals = std::mem::take(&mut ctx.pending_external_globals);
     let buffer_alias_used = ctx.buffer_data_slots.len() as u32;
     drop(ctx); // releases &mut LlFunction borrow on llmod
     llmod.ic_counter = ic_end;
     llmod.buffer_alias_counter += buffer_alias_used;
     for (name, ret, params) in pending {
         llmod.declare_function(&name, ret, &params);
+    }
+    for (name, ty) in pending_globals {
+        llmod.add_external_global_raw(&name, &ty);
     }
     for ic_name in &ic_globals {
         llmod.add_raw_global(format!("@{} = private global [2 x i64] zeroinitializer", ic_name));
@@ -2021,6 +1921,7 @@ fn compile_closure(
         imported_func_param_counts: &cross_module.imported_func_param_counts,
         imported_func_return_types: &cross_module.imported_func_return_types,
         pending_declares: Vec::new(),
+        pending_external_globals: Vec::new(),
         integer_locals: &integer_locals,
         arena_state_slot: None,
         class_keys_slots: HashMap::new(),
@@ -2057,12 +1958,16 @@ fn compile_closure(
     let ic_globals = std::mem::take(&mut ctx.ic_globals);
     let ic_end = ctx.ic_site_counter;
     let pending = std::mem::take(&mut ctx.pending_declares);
+    let pending_globals = std::mem::take(&mut ctx.pending_external_globals);
     let buffer_alias_used = ctx.buffer_data_slots.len() as u32;
     drop(ctx);
     llmod.ic_counter = ic_end;
     llmod.buffer_alias_counter += buffer_alias_used;
     for (name, ret, params) in pending {
         llmod.declare_function(&name, ret, &params);
+    }
+    for (name, ty) in pending_globals {
+        llmod.add_external_global_raw(&name, &ty);
     }
     for ic_name in &ic_globals {
         llmod.add_raw_global(format!("@{} = private global [2 x i64] zeroinitializer", ic_name));
@@ -2194,6 +2099,7 @@ fn compile_method(
         imported_func_param_counts: &cross_module.imported_func_param_counts,
         imported_func_return_types: &cross_module.imported_func_return_types,
         pending_declares: Vec::new(),
+        pending_external_globals: Vec::new(),
         integer_locals: &integer_locals,
         arena_state_slot: None,
         class_keys_slots: HashMap::new(),
@@ -2242,12 +2148,16 @@ fn compile_method(
     let ic_globals = std::mem::take(&mut ctx.ic_globals);
     let ic_end = ctx.ic_site_counter;
     let pending = std::mem::take(&mut ctx.pending_declares);
+    let pending_globals = std::mem::take(&mut ctx.pending_external_globals);
     let buffer_alias_used = ctx.buffer_data_slots.len() as u32;
     drop(ctx);
     llmod.ic_counter = ic_end;
     llmod.buffer_alias_counter += buffer_alias_used;
     for (name, ret, params) in pending {
         llmod.declare_function(&name, ret, &params);
+    }
+    for (name, ty) in pending_globals {
+        llmod.add_external_global_raw(&name, &ty);
     }
     for ic_name in &ic_globals {
         llmod.add_raw_global(format!("@{} = private global [2 x i64] zeroinitializer", ic_name));
@@ -2402,6 +2312,7 @@ fn compile_module_entry(
             imported_func_param_counts: &cross_module.imported_func_param_counts,
             imported_func_return_types: &cross_module.imported_func_return_types,
             pending_declares: Vec::new(),
+            pending_external_globals: Vec::new(),
             integer_locals: &main_integer_locals,
             arena_state_slot: None,
             class_keys_slots: HashMap::new(),
@@ -2522,12 +2433,16 @@ fn compile_module_entry(
     let ic_globals = std::mem::take(&mut ctx.ic_globals);
         let ic_end = ctx.ic_site_counter;
         let pending = std::mem::take(&mut ctx.pending_declares);
+        let pending_globals = std::mem::take(&mut ctx.pending_external_globals);
         let buffer_alias_used = ctx.buffer_data_slots.len() as u32;
         drop(ctx);
         llmod.ic_counter = ic_end;
         llmod.buffer_alias_counter += buffer_alias_used;
         for (name, ret, params) in pending {
             llmod.declare_function(&name, ret, &params);
+        }
+        for (name, ty) in pending_globals {
+            llmod.add_external_global_raw(&name, &ty);
         }
     for ic_name in &ic_globals {
         llmod.add_raw_global(format!("@{} = private global [2 x i64] zeroinitializer", ic_name));
@@ -2614,6 +2529,7 @@ fn compile_module_entry(
             imported_func_param_counts: &cross_module.imported_func_param_counts,
             imported_func_return_types: &cross_module.imported_func_return_types,
             pending_declares: Vec::new(),
+            pending_external_globals: Vec::new(),
             integer_locals: &init_integer_locals,
             arena_state_slot: None,
             class_keys_slots: HashMap::new(),
@@ -2657,12 +2573,16 @@ fn compile_module_entry(
     let ic_globals = std::mem::take(&mut ctx.ic_globals);
         let ic_end = ctx.ic_site_counter;
         let pending = std::mem::take(&mut ctx.pending_declares);
+        let pending_globals = std::mem::take(&mut ctx.pending_external_globals);
         let buffer_alias_used = ctx.buffer_data_slots.len() as u32;
         drop(ctx);
         llmod.ic_counter = ic_end;
         llmod.buffer_alias_counter += buffer_alias_used;
         for (name, ret, params) in pending {
             llmod.declare_function(&name, ret, &params);
+        }
+        for (name, ty) in pending_globals {
+            llmod.add_external_global_raw(&name, &ty);
         }
     for ic_name in &ic_globals {
         llmod.add_raw_global(format!("@{} = private global [2 x i64] zeroinitializer", ic_name));
@@ -3005,6 +2925,7 @@ fn compile_static_method(
         imported_func_param_counts: &cross_module.imported_func_param_counts,
         imported_func_return_types: &cross_module.imported_func_return_types,
         pending_declares: Vec::new(),
+        pending_external_globals: Vec::new(),
         integer_locals: &integer_locals,
         arena_state_slot: None,
         class_keys_slots: HashMap::new(),
@@ -3048,12 +2969,16 @@ fn compile_static_method(
     let ic_globals = std::mem::take(&mut ctx.ic_globals);
     let ic_end = ctx.ic_site_counter;
     let pending = std::mem::take(&mut ctx.pending_declares);
+    let pending_globals = std::mem::take(&mut ctx.pending_external_globals);
     let buffer_alias_used = ctx.buffer_data_slots.len() as u32;
     drop(ctx);
     llmod.ic_counter = ic_end;
     llmod.buffer_alias_counter += buffer_alias_used;
     for (name, ret, params) in pending {
         llmod.declare_function(&name, ret, &params);
+    }
+    for (name, ty) in pending_globals {
+        llmod.add_external_global_raw(&name, &ty);
     }
     for ic_name in &ic_globals {
         llmod.add_raw_global(format!("@{} = private global [2 x i64] zeroinitializer", ic_name));

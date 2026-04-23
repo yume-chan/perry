@@ -19,6 +19,7 @@ pub struct LlModule {
     pub target_triple: String,
     declarations: Vec<(String, String)>, // (name, full "declare …" line)
     declared_names: HashSet<String>,
+    declared_global_names: HashSet<String>,
     functions: Vec<LlFunction>,
     globals: Vec<String>,
     string_constants: Vec<String>,
@@ -47,6 +48,7 @@ impl LlModule {
             target_triple: target_triple.into(),
             declarations: Vec::new(),
             declared_names: HashSet::new(),
+            declared_global_names: HashSet::new(),
             functions: Vec::new(),
             globals: Vec::new(),
             string_constants: Vec::new(),
@@ -111,6 +113,18 @@ impl LlModule {
     }
 
     pub fn add_external_global(&mut self, name: &str, ty: LlvmType) {
+        if !self.declared_global_names.insert(name.to_string()) {
+            return;
+        }
+        self.globals.push(format!("@{} = external global {}", name, ty));
+    }
+
+    /// Add an external global declaration with an arbitrary LLVM type string
+    /// (for aggregate types not represented by `LlvmType`).
+    pub fn add_external_global_raw(&mut self, name: &str, ty: &str) {
+        if !self.declared_global_names.insert(name.to_string()) {
+            return;
+        }
         self.globals.push(format!("@{} = external global {}", name, ty));
     }
 

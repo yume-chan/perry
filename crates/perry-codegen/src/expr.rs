@@ -310,6 +310,10 @@ pub(crate) struct FnCtx<'a> {
     /// emission point so any path the lowering reaches automatically gets
     /// its declare — no walker to keep in sync.
     pub pending_declares: Vec<(String, crate::types::LlvmType, Vec<crate::types::LlvmType>)>,
+    /// External global declarations required by this function body.
+    /// Used for cross-module static closure globals referenced by
+    /// ExternFuncRef-as-value lowering.
+    pub pending_external_globals: Vec<(String, String)>,
 
     /// LocalIds that are provably integer-valued — i.e., initialized from
     /// an integer literal and never the target of a `LocalSet` (only the
@@ -7438,15 +7442,10 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         // ExternFuncRef, .. }` directly to the cross-module symbol. When
         // an imported function appears as a STANDALONE value — `if
         // (this.ffi.setCursors)` truthiness check, `someFn === otherFn`
-        // equality comparison, or being passed as a callback — we route
-        // to the static `__perry_extern_closure_<src>__<name>` global
-        // emitted by `compile_module` for every imported function (see the
-        // wrapper-emit block right after the user-function `__perry_wrap_*`
-        // loop). The global is a `ClosureHeader` with `func_ptr` pointing
-        // at a thin `__perry_wrap_extern_<src>__<name>` thunk and
-        // `type_tag = CLOSURE_MAGIC`, so the runtime's `js_closure_callN`
-        // sees a valid closure and dispatches correctly. We just take the
-        // address and NaN-box it as POINTER.
+        // equality comparison, or being passed as a callback — we reuse the
+        // source module's static closure global for that function:
+        // `@__perry_static_closure_perry_fn_<src>__<name>`.
+        // This avoids synthesizing importer-local extern wrappers.
         //
         // For namespaces / built-ins that aren't in `import_function_prefixes`
         // (e.g. setTimeout / clearTimeout / Math / Date), we still don't
@@ -7490,9 +7489,13 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
                 }
                 let global_name = format!(
-                    "__perry_extern_closure_{}__{}",
+                    "__perry_static_closure_perry_fn_{}__{}",
                     source_prefix, name
                 );
+                ctx.pending_external_globals.push((
+                    global_name.clone(),
+                    "{ ptr, i32, i32 }".to_string(),
+                ));
                 let global_ref = format!("@{}", global_name);
                 let blk = ctx.block();
                 let addr_i64 = blk.ptrtoint(&global_ref, I64);
