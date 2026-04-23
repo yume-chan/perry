@@ -5980,14 +5980,20 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             Ok(ctx.block().call(DOUBLE, "js_date_set_utc_month", &[(DOUBLE, &d), (DOUBLE, &v)]))
         }
         Expr::ArrayIsArray(o) => {
-            // Compile-time check: emit TAG_TRUE if the operand is
-            // statically an array, else TAG_FALSE. NaN-boxed booleans
-            // so console.log prints "true"/"false".
-            let _ = lower_expr(ctx, o)?;
+            let val = lower_expr(ctx, o)?;
+            // Static fast-path: if the compiler knows o is an array, emit
+            // TAG_TRUE immediately without a runtime call.  For all other
+            // types (string, any, union, unknown argument) fall back to the
+            // runtime check `js_array_is_array(value)` which inspects the
+            // NaN-boxing tag at run-time.  The old code always returned
+            // TAG_FALSE for non-statically-array expressions, which caused
+            // `Array.isArray(prerelease)` to return `false` even when
+            // `prerelease` was actually an array at run-time (e.g.
+            // TypeScript's `new Version(0,0,0,["0"])`).
             if is_array_expr(ctx, o) {
                 Ok(double_literal(f64::from_bits(crate::nanbox::TAG_TRUE)))
             } else {
-                Ok(double_literal(f64::from_bits(crate::nanbox::TAG_FALSE)))
+                Ok(ctx.block().call(DOUBLE, "js_array_is_array", &[(DOUBLE, &val)]))
             }
         }
 
