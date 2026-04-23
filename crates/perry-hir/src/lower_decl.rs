@@ -1822,23 +1822,29 @@ pub(crate) fn lower_block_stmt(ctx: &mut LoweringContext, block: &ast::BlockStmt
     // and closures can capture variables regardless of declaration order
     pre_register_all_declarations(ctx, block)?;
     
-    let mut stmts = Vec::new();
+    let mut fn_stmts = Vec::new();
+    let mut other_stmts = Vec::new();
     
-    // First pass: process Fn declarations (in source order) so they're available
-    // for forward references from subsequent expressions
+    // Separate Fn declarations from other statements
     for stmt in &block.stmts {
         if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
             if fn_decl.function.body.is_some() {
-                stmts.extend(lower_body_stmt(ctx, stmt)?);
+                fn_stmts.push(stmt);
             }
+        } else {
+            other_stmts.push(stmt);
         }
     }
     
-    // Second pass: process all other statements
-    for stmt in &block.stmts {
-        if !matches!(stmt, ast::Stmt::Decl(ast::Decl::Fn(_))) {
-            stmts.extend(lower_body_stmt(ctx, stmt)?);
-        }
+    // First emit all Fn statements (hoisted), then all other statements
+    // This implements JavaScript function hoisting where function declarations
+    // are available throughout their scope even before the source declaration
+    let mut stmts = Vec::new();
+    for stmt in fn_stmts {
+        stmts.extend(lower_body_stmt(ctx, stmt)?);
+    }
+    for stmt in other_stmts {
+        stmts.extend(lower_body_stmt(ctx, stmt)?);
     }
     
     Ok(stmts)
@@ -1854,23 +1860,29 @@ pub(crate) fn lower_block_stmt_scoped(ctx: &mut LoweringContext, block: &ast::Bl
     // and closures can capture variables regardless of declaration order
     pre_register_all_declarations(ctx, block)?;
     
-    let mut stmts = Vec::new();
+    let mut fn_stmts = Vec::new();
+    let mut other_stmts = Vec::new();
     
-    // First pass: process Fn declarations (in source order) so they're available
-    // for forward references from subsequent expressions
+    // Separate Fn declarations from other statements
     for stmt in &block.stmts {
         if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
             if fn_decl.function.body.is_some() {
-                stmts.extend(lower_body_stmt(ctx, stmt)?);
+                fn_stmts.push(stmt);
             }
+        } else {
+            other_stmts.push(stmt);
         }
     }
     
-    // Second pass: process all other statements
-    for stmt in &block.stmts {
-        if !matches!(stmt, ast::Stmt::Decl(ast::Decl::Fn(_))) {
-            stmts.extend(lower_body_stmt(ctx, stmt)?);
-        }
+    // First emit all Fn statements (hoisted), then all other statements
+    // This implements JavaScript function hoisting where function declarations
+    // are available throughout their scope even before the source declaration
+    let mut stmts = Vec::new();
+    for stmt in fn_stmts {
+        stmts.extend(lower_body_stmt(ctx, stmt)?);
+    }
+    for stmt in other_stmts {
+        stmts.extend(lower_body_stmt(ctx, stmt)?);
     }
     
     ctx.pop_block_scope(mark);
