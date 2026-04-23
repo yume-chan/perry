@@ -2382,6 +2382,14 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         if is_enum {
                             return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
                         }
+                        // Imported class / namespace names have no `perry_fn_*` getter —
+                        // they're compile-time constructs with static methods only.
+                        // `ts.Debug` used as a value is handled by the static-dispatch
+                        // path in lower_call.rs; here we return TAG_UNDEFINED to avoid
+                        // emitting a call to the nonexistent getter.
+                        if ctx.classes.contains_key(property.as_str()) {
+                            return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
+                        }
                         let getter = format!("perry_fn_{}__{}", source_prefix, property);
                         ctx.pending_declares.push((getter.clone(), DOUBLE, vec![]));
                         return Ok(ctx.block().call(DOUBLE, &getter, &[]));

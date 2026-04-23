@@ -406,6 +406,32 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                 }
             }
         }
+        // ── Namespace-through-class static dispatch ──
+        // `ts.Debug.assert(cond)` is lowered as
+        // `Call { callee: PropertyGet { PropertyGet { ExternFuncRef("ts"), "Debug" }, "assert" }, args }`.
+        // When the inner PropertyGet yields an imported class name from a namespace import,
+        // dispatch directly to `perry_static_<prefix>__<Class>__<method>(args)`.
+        if let Expr::PropertyGet { object: inner_obj, property: class_name } = object.as_ref() {
+            if let Expr::ExternFuncRef { name: ns_name, .. } = inner_obj.as_ref() {
+                if ctx.namespace_imports.contains(ns_name.as_str())
+                    && ctx.classes.contains_key(class_name.as_str())
+                {
+                    let method_key = (class_name.clone(), property.clone());
+                    if let Some(fn_name) = ctx.methods.get(&method_key).cloned() {
+                        let mut lowered_args: Vec<String> = Vec::with_capacity(args.len());
+                        for a in args {
+                            lowered_args.push(lower_expr(ctx, a)?);
+                        }
+                        let arg_slices: Vec<(crate::types::LlvmType, &str)> =
+                            lowered_args.iter().map(|s| (DOUBLE, s.as_str())).collect();
+                        let param_types: Vec<crate::types::LlvmType> =
+                            std::iter::repeat(DOUBLE).take(lowered_args.len()).collect();
+                        ctx.pending_declares.push((fn_name.clone(), DOUBLE, param_types));
+                        return Ok(ctx.block().call(DOUBLE, &fn_name, &arg_slices));
+                    }
+                }
+            }
+        }
 
         // Number.prototype.toFixed(decimals) — call js_number_to_fixed.
         // Receiver is any number-typed value; we don't gate on

@@ -2880,6 +2880,30 @@ fn lower_module_decl(
                                     module.exported_objects.push(name.clone());
                                 }
                             }
+                        } else {
+                            // `export let x: T;` — no initializer.
+                            // Still register as an exported module-level variable so
+                            // cross-module importers can read it via the generated
+                            // getter `perry_fn_<prefix>__<name>()`. The variable starts
+                            // as undefined and may be assigned later in the module body
+                            // (e.g. `export let tracing: ... | undefined;` in tracing.ts).
+                            let id = if ctx.pre_registered_module_vars.remove(&name) {
+                                ctx.lookup_local(&name).unwrap()
+                            } else {
+                                ctx.define_local(name.clone(), ty.clone())
+                            };
+                            module.init.push(Stmt::Let {
+                                id,
+                                name: name.clone(),
+                                ty,
+                                mutable: true,
+                                init: None,
+                            });
+                            module.exports.push(Export::Named {
+                                local: name.clone(),
+                                exported: name.clone(),
+                            });
+                            module.exported_objects.push(name.clone());
                         }
                     }
                 }
@@ -3017,6 +3041,28 @@ fn lower_module_decl(
                                     break;
                                 }
                             }
+                        }
+
+                        // If the local name is a namespace import (`import * as X`),
+                        // re-exporting it (`export { X }`) needs a module-level global
+                        // and getter so other modules can call `perry_fn_<src>__X()`.
+                        // We create a synthetic Stmt::Let holding an ExternFuncRef so
+                        // the codegen emits the global and getter correctly.
+                        if let Some(orig_name) = ctx.lookup_imported_func(&local) {
+                            let orig = orig_name.to_string();
+                            let id = ctx.define_local(exported.clone(), Type::Any);
+                            module.init.push(Stmt::Let {
+                                id,
+                                name: exported.clone(),
+                                ty: Type::Any,
+                                mutable: false,
+                                init: Some(Expr::ExternFuncRef {
+                                    name: orig,
+                                    param_types: Vec::new(),
+                                    return_type: Type::Any,
+                                }),
+                            });
+                            module.exported_objects.push(exported.clone());
                         }
                     }
                 }

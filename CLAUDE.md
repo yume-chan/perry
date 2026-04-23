@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.133
+**Current Version:** 0.5.134
 
 ## TypeScript Parity Status
 
@@ -42,6 +42,18 @@ cargo test --workspace --exclude perry-ui-ios  # Run tests (exclude iOS on macOS
 cargo run --release -- file.ts -o output && ./output    # Compile and run TypeScript
 cargo run --release -- file.ts --print-hir              # Debug: print HIR
 ```
+
+## Compiling TypeScript's `tsc.ts`
+
+The `vendor/TypeScript` directory is a git submodule (Microsoft's TypeScript repo). Before running
+`perry compile vendor/TypeScript/src/tsc/tsc.ts`, you must generate the diagnostic file:
+
+```bash
+cd vendor/TypeScript
+node scripts/processDiagnosticMessages.mjs src/compiler/diagnosticMessages.json
+```
+
+This produces `src/compiler/diagnosticInformationMap.generated.ts` which is imported by `scanner.ts`.
 
 ## Architecture
 
@@ -150,6 +162,7 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 
 Keep entries to 1-2 lines max. Full details in CHANGELOG.md.
 
+- **v0.5.134** — Fix remaining linker errors when compiling `tsc.ts`: (1) `export let tracing: T | undefined;` (no initializer) now generates a module global + getter; (2) `export { performance }` where `performance` is a namespace import now emits a module global + getter in the re-exporting module; (3) `ts.Debug` accessed via namespace import no longer calls a nonexistent getter — class names are suppressed in the namespace-property path of `expr.rs`; (4) `ts.Debug.enableDebugInfo()` 3-deep namespace→class→method calls dispatch directly to `perry_static_*` in `lower_call.rs`. Also add CLAUDE.md note about generating `diagnosticInformationMap.generated.ts` before compiling `tsc.ts`.
 - **v0.5.133** — Fix linker errors for namespace-imported enums (`import * as ts`): `ts.SyntaxKind.Identifier` was lowered as a nested `PropertyGet` that called the non-existent getter `perry_fn_...__SyntaxKind()`. Three guards added to `expr.rs`: (1) early pattern-match in the outer `PropertyGet` lowering: `PropertyGet { PropertyGet { ExternFuncRef(ns), enumName }, memberName }` where `ns` is a namespace import → resolve directly to the enum constant; (2) namespace member access for enum names returns `TAG_UNDEFINED` instead of calling a getter; (3) named-import `ExternFuncRef { enumName }` used as a `PropertyGet` object (fallback guard) also resolves to the enum constant or `TAG_UNDEFINED`.
 - **v0.5.132** — Fix linker errors for imported classes/enums when compiling TypeScript v6.0.3: (1) Added `static_method_names` to `ImportedClass` and populate from `class.static_methods` in compile.rs — namespace classes have all methods in `static_methods`, not `methods`. (2) In Phase F of codegen.rs, register `static_method_names` with `perry_static_` prefix. (3) Skip generating `__perry_wrap_extern_*`/`declare perry_fn_*` for imported class and enum names — these have no module-level getter functions, so emitting the wrappers caused linker errors (`SyntaxKind`, `Debug`, `CharacterCodes`, etc.). (4) In lower_call.rs, early-dispatch `Call { PropertyGet { ExternFuncRef(class), method } }` directly to `perry_static_<prefix>__<Class>__<method>(args)`. (5) In expr.rs, return TAG_UNDEFINED for ExternFuncRef class-name standalone values (no closure global is generated for them).
 - **v0.5.130** — Linux UI link, real root cause. The v0.5.129 diagnostic confirmed `--whole-archive` WAS being applied to `libperry_stdlib.a` but `js_stdlib_process_pending` was still undefined. Actual root cause: `perry-stdlib/src/common/mod.rs:8` gates `async_bridge` on `#[cfg(feature = "async-runtime")]` — a bare UI program like `counter.ts` imports zero stdlib modules, so `compute_required_features` returned an empty set and the auto-optimized stdlib was built with `--no-default-features` → no `async-runtime` → `async_bridge` module not compiled → symbol simply absent from the archive. perry-ui-gtk4's glib-source trampolines (`js_stdlib_process_pending`, `js_promise_run_microtasks`) had no provider. Fix: in `build_optimized_libs`, force `async-runtime` into the feature set when `ctx.needs_ui` — the UI backend needs the async bridge whether or not user code does. Also latent on macOS but silent (the runtime stub returns 0 and the counter doesn't exercise async paths). The `--whole-archive` Linux+UI path from v0.5.128 stays in place as the force-link mechanism for cases where `ctx.needs_stdlib=false`.
