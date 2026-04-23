@@ -5038,24 +5038,50 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
         }
     } else if bitcode_link {
         // bitcode_link was requested but runtime .bc wasn't produced.
-        // Fall back: compile any .ll files to .o via clang -c.
+        // Fall back: compile any .ll files to .o via clang -c (in parallel).
         eprintln!("  bitcode-link: runtime .bc not available, falling back to normal link");
-        let mut new_obj_paths: Vec<PathBuf> = Vec::new();
-        for p in &obj_paths {
-            if p.extension().and_then(|e| e.to_str()) == Some("ll") {
-                let ll_text = fs::read_to_string(p)?;
+        
+        // Filter to only .ll files
+        let ll_files: Vec<&PathBuf> = obj_paths.iter()
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("ll"))
+            .collect();
+        
+        // Compile all .ll files to .o in parallel
+        use rayon::prelude::*;
+        let compile_results: Vec<Result<(PathBuf, PathBuf), String>> = ll_files.par_iter()
+            .map(|p| {
+                let ll_text = fs::read_to_string(p)
+                    .map_err(|e| format!("Failed to read {}: {}", p.display(), e))?;
                 let obj_bytes = perry_codegen::linker::compile_ll_to_object(
                     &ll_text,
                     target.as_deref(),
-                )?;
+                ).map_err(|e| format!("Failed to compile {}: {}", p.display(), e))?;
                 let obj_path = p.with_extension("o");
-                fs::write(&obj_path, &obj_bytes)?;
-                let _ = fs::remove_file(p);
-                new_obj_paths.push(obj_path);
-            } else {
+                fs::write(&obj_path, &obj_bytes)
+                    .map_err(|e| format!("Failed to write {}: {}", obj_path.display(), e))?;
+                Ok(((*p).clone(), obj_path))
+            })
+            .collect();
+        
+        // Process results
+        let mut new_obj_paths: Vec<PathBuf> = Vec::new();
+        for result in compile_results {
+            match result {
+                Ok((ll_path, obj_path)) => {
+                    let _ = fs::remove_file(&ll_path);
+                    new_obj_paths.push(obj_path);
+                }
+                Err(e) => return Err(anyhow!(e)),
+            }
+        }
+        
+        // Add non-.ll files as-is
+        for p in &obj_paths {
+            if p.extension().and_then(|e| e.to_str()) != Some("ll") {
                 new_obj_paths.push(p.clone());
             }
         }
+        
         obj_paths = new_obj_paths;
         false
     } else {
