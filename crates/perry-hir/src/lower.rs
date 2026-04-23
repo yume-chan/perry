@@ -2910,6 +2910,7 @@ fn lower_module_decl(
                 ast::Decl::Class(class_decl) => {
                     let class = lower_class_decl(ctx, class_decl, true)?;
                     let class_name = class.name.clone();
+                    module.class_init_checkpoints.push((module.init.len(), class_name.clone()));
                     module.classes.push(class);
                     module.exports.push(Export::Named {
                         local: class_name.clone(),
@@ -3728,6 +3729,7 @@ fn lower_stmt(
                 }
                 ast::Decl::Class(class_decl) => {
                     let class = lower_class_decl(ctx, class_decl, false)?;
+                    module.class_init_checkpoints.push((module.init.len(), class.name.clone()));
                     module.classes.push(class);
                 }
                 ast::Decl::TsEnum(enum_decl) => {

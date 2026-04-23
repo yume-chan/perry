@@ -2441,10 +2441,14 @@ fn compile_module_entry(
         // fallback both validate against the known-heap-pointer set and
         // discard non-matching bits.
         register_module_globals_as_gc_roots(&mut ctx, module_globals);
-        // Initialize static class fields with their declared init
-        // expressions. Runs once at the top of main, before user code.
-        init_static_fields(&mut ctx, hir)?;
-        stmt::lower_stmts(&mut ctx, &hir.init)
+        // Register error-inheritance chains and well-known symbol hooks first
+        // (these don't depend on module-level constants).
+        register_class_hooks(&mut ctx, hir)?;
+        // Run module init statements and class static field inits in source
+        // order (class static fields are interleaved at the position where
+        // each class declaration appears in the source, so module-level
+        // constants declared before a class are fully initialized first).
+        lower_module_init_interleaved(&mut ctx, hir)
             .with_context(|| format!("lowering init statements of module '{}'", hir.name))?;
 
         if !ctx.block().is_terminated() {
@@ -2643,8 +2647,8 @@ fn compile_module_entry(
         // right after js_gc_init, so by the time any user code executes
         // every module's globals are already GC-rooted.
         register_module_globals_as_gc_roots(&mut ctx, module_globals);
-        init_static_fields(&mut ctx, hir)?;
-        stmt::lower_stmts(&mut ctx, &hir.init)
+        register_class_hooks(&mut ctx, hir)?;
+        lower_module_init_interleaved(&mut ctx, hir)
             .with_context(|| format!("lowering init statements of non-entry module '{}'", hir.name))?;
 
         if !ctx.block().is_terminated() {
@@ -3099,12 +3103,11 @@ fn register_module_globals_as_gc_roots(
     }
 }
 
-/// Initialize each class's static fields with their declared init
-/// expressions. Called at the top of compile_module_entry's main /
-/// __init function. The static field globals were registered in
-/// compile_module — this just emits the per-field "store init value
-/// to global" sequence.
-fn init_static_fields(
+/// Register class hooks that need to run early (before any module-level code):
+/// - Error subclass registration for `instanceof Error` chains
+/// - Well-known symbol hooks (hasInstance, toStringTag)
+/// These don't depend on module-level constants and are safe to run first.
+fn register_class_hooks(
     ctx: &mut crate::expr::FnCtx<'_>,
     hir: &HirModule,
 ) -> Result<()> {
@@ -3186,33 +3189,133 @@ fn init_static_fields(
             ],
         );
     }
-    for c in &hir.classes {
-        for sf in &c.static_fields {
-            let key = (c.name.clone(), sf.name.clone());
-            let Some(global_name) = ctx.static_field_globals.get(&key).cloned() else {
-                continue;
-            };
-            if let Some(init_expr) = &sf.init {
-                let v = crate::expr::lower_expr(ctx, init_expr)?;
-                let g_ref = format!("@{}", global_name);
-                ctx.block().store(DOUBLE, &v, &g_ref);
+    Ok(())
+}
+
+/// Initialize static fields and static blocks for a single named class.
+/// Called at the correct source-order position relative to module init stmts.
+fn init_one_class_static_fields(
+    ctx: &mut crate::expr::FnCtx<'_>,
+    hir: &HirModule,
+    class_name: &str,
+) -> Result<()> {
+    let Some(c) = hir.classes.iter().find(|c| c.name == class_name) else {
+        return Ok(());
+    };
+    for sf in &c.static_fields {
+        let key = (c.name.clone(), sf.name.clone());
+        let Some(global_name) = ctx.static_field_globals.get(&key).cloned() else {
+            continue;
+        };
+        if let Some(init_expr) = &sf.init {
+            let v = crate::expr::lower_expr(ctx, init_expr)?;
+            let g_ref = format!("@{}", global_name);
+            ctx.block().store(DOUBLE, &v, &g_ref);
+        }
+    }
+    // Static blocks — call synthetic `__perry_static_init_` methods.
+    for sm in &c.static_methods {
+        if !sm.name.starts_with("__perry_static_init_") {
+            continue;
+        }
+        let key = (c.name.clone(), sm.name.clone());
+        if let Some(llvm_name) = ctx.methods.get(&key).cloned() {
+            ctx.block().call(DOUBLE, &llvm_name, &[]);
+        }
+    }
+    Ok(())
+}
+
+/// Lower module init statements and class static fields in source order.
+///
+/// JavaScript semantics require class static fields to be initialized at the
+/// point the class declaration is evaluated in the module's top-level code.
+/// We track `class_init_checkpoints` in the HIR: each entry is
+/// `(init_stmt_index, class_name)` meaning "after N init stmts have run,
+/// initialize that class's static fields."
+///
+/// Classes with NO checkpoint (e.g. anonymous / mixin / expression classes)
+/// fall back to being initialized after all init stmts, preserving the old
+/// conservative behaviour.
+fn lower_module_init_interleaved(
+    ctx: &mut crate::expr::FnCtx<'_>,
+    hir: &HirModule,
+) -> Result<()> {
+    // Build a map: init_stmt_index -> list of class names to init BEFORE
+    // running that stmt (i.e. right after running stmts [0..index)).
+    let mut checkpoints: std::collections::HashMap<usize, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut checkpointed_classes: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for (idx, name) in &hir.class_init_checkpoints {
+        checkpoints.entry(*idx).or_default().push(name.clone());
+        checkpointed_classes.insert(name.clone());
+    }
+
+    // Run init stmts; before each stmt at position i, fire any class static
+    // inits whose checkpoint == i.
+    for (i, stmt) in hir.init.iter().enumerate() {
+        if let Some(classes) = checkpoints.remove(&i) {
+            for class_name in &classes {
+                init_one_class_static_fields(ctx, hir, class_name)?;
+                if ctx.block().is_terminated() {
+                    return Ok(());
+                }
+            }
+        }
+        crate::stmt::lower_stmts(ctx, std::slice::from_ref(stmt))?;
+        if ctx.block().is_terminated() {
+            return Ok(());
+        }
+    }
+
+    // Fire any checkpoints AFTER the last init stmt (classes declared at the
+    // very end of the module, or with checkpoint == hir.init.len()).
+    let remaining_len = hir.init.len();
+    if let Some(classes) = checkpoints.remove(&remaining_len) {
+        for class_name in &classes {
+            init_one_class_static_fields(ctx, hir, class_name)?;
+        }
+    }
+    // Any remaining checkpoints beyond init.len() — shouldn't happen, but be safe.
+    let mut remaining_keys: Vec<usize> = checkpoints.keys().copied().collect();
+    remaining_keys.sort();
+    for k in remaining_keys {
+        if let Some(classes) = checkpoints.remove(&k) {
+            for class_name in &classes {
+                init_one_class_static_fields(ctx, hir, class_name)?;
             }
         }
     }
-    // Static blocks — emitted as synthetic static methods with the
-    // name prefix `__perry_static_init_`. Call them in registration
-    // order for each class, after that class's static fields are
-    // initialized, so they can reference those fields.
+
+    // Classes that have no checkpoint (class expressions, pending classes,
+    // namespace classes, mixin classes) — initialize after all module stmts,
+    // same as the previous unconditional behaviour.
     for c in &hir.classes {
-        for sm in &c.static_methods {
-            if !sm.name.starts_with("__perry_static_init_") {
-                continue;
-            }
-            let key = (c.name.clone(), sm.name.clone());
-            if let Some(llvm_name) = ctx.methods.get(&key).cloned() {
-                ctx.block().call(DOUBLE, &llvm_name, &[]);
-            }
+        if !checkpointed_classes.contains(&c.name) {
+            init_one_class_static_fields(ctx, hir, &c.name)?;
         }
+    }
+
+    Ok(())
+}
+
+/// Initialize each class's static fields with their declared init
+/// expressions. Called at the top of compile_module_entry's main /
+/// __init function. The static field globals were registered in
+/// compile_module — this just emits the per-field "store init value
+/// to global" sequence.
+///
+/// NOTE: This function is preserved for backward compatibility with
+/// the dylib path and any other callers. For the standard module entry
+/// path use `register_class_hooks` + `lower_module_init_interleaved` instead.
+fn init_static_fields(
+    ctx: &mut crate::expr::FnCtx<'_>,
+    hir: &HirModule,
+) -> Result<()> {
+    register_class_hooks(ctx, hir)?;
+    for c in &hir.classes {
+        init_one_class_static_fields(ctx, hir, &c.name)?;
     }
     Ok(())
 }

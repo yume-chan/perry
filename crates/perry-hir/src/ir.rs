@@ -234,6 +234,12 @@ pub struct Module {
     /// External FFI function declarations (name, param_types, return_type)
     /// Populated from `declare function` statements with no body.
     pub extern_funcs: Vec<(String, Vec<Type>, Type)>,
+    /// Ordered list of (init_stmt_index, class_name) checkpoints.
+    /// Each entry means: "after `init_stmt_index` init statements have run,
+    /// initialize the static fields of `class_name`." This preserves
+    /// JavaScript source order — module-level constants declared before a
+    /// class are fully initialized before that class's static fields run.
+    pub class_init_checkpoints: Vec<(usize, String)>,
 }
 
 /// A widget extension declaration (WidgetKit on iOS/watchOS, Glance on Android, Tiles on Wear OS)
@@ -1881,6 +1887,7 @@ impl Module {
             widgets: Vec::new(),
             uses_fetch: false,
             extern_funcs: Vec::new(),
+            class_init_checkpoints: Vec::new(),
         }
     }
 }
