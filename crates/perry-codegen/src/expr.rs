@@ -5040,7 +5040,6 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
 
                 // Shared lowering logic given callee arity + has_rest flag.
                 // Returns None if the shape can't be handled.
-                #[allow(unused_assignments)]
                 let make_args = |ctx: &mut FnCtx<'_>, declared_count: usize, has_rest: bool| -> Result<Option<Vec<String>>> {
                     let mut lowered: Vec<String> = Vec::with_capacity(declared_count.max(args.len()));
                     // Regular args before the spread.
