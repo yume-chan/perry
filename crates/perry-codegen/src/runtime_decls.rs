@@ -187,7 +187,9 @@ pub fn declare_phase_b_strings(module: &mut LlModule) {
     module.declare_function("js_math_max_array", DOUBLE, &[I64]);
     module.declare_function("js_string_coerce", I64, &[DOUBLE]);
     module.declare_function("js_array_slice", I64, &[I64, I32, I32]);
-    module.declare_function("js_array_is_array", DOUBLE, &[DOUBLE]);    module.declare_function("js_set_alloc", I64, &[I32]);
+    module.declare_function("js_array_is_array", DOUBLE, &[DOUBLE]);
+    module.declare_function("js_array_shift_f64", DOUBLE, &[I64]);
+    module.declare_function("js_set_alloc", I64, &[I32]);
     module.declare_function("js_set_from_array", I64, &[I64]);
     module.declare_function("js_map_from_array", I64, &[I64]);
     module.declare_function("js_object_has_property", DOUBLE, &[DOUBLE, DOUBLE]);
