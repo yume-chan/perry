@@ -942,6 +942,31 @@ fn inline_calls_in_expr(
     hoisted
 }
 
+/// Build a substitution map from function parameters to call arguments.
+///
+/// For regular parameters, maps param.id → arg.
+/// For the final rest parameter (`param.is_rest == true`), maps
+/// param.id → `Expr::Array([remaining_args...])` so that the rest
+/// array is reconstructed correctly when the function is inlined.
+fn build_param_map(
+    params: &[perry_hir::Param],
+    args: &[Expr],
+) -> HashMap<LocalId, Expr> {
+    let mut map: HashMap<LocalId, Expr> = HashMap::new();
+    // Find if the last param is a rest param.
+    let rest_idx = params.iter().rposition(|p| p.is_rest);
+    for (i, param) in params.iter().enumerate() {
+        if Some(i) == rest_idx {
+            // Build an Array literal from the remaining args.
+            let rest_args: Vec<Expr> = args.get(i..).unwrap_or(&[]).to_vec();
+            map.insert(param.id, Expr::Array(rest_args));
+        } else if let Some(arg) = args.get(i) {
+            map.insert(param.id, arg.clone());
+        }
+    }
+    map
+}
+
 /// Try to inline a simple function or method call.
 /// Handles two patterns:
 /// 1. Single `Return(expr)` body — classic expression-level inline
@@ -960,10 +985,7 @@ fn try_inline_simple_call(
                 // Pattern 1: single Return(expr)
                 if func.body.len() == 1 {
                     if let Stmt::Return(Some(return_expr)) = &func.body[0] {
-                        let mut param_map: HashMap<LocalId, Expr> = HashMap::new();
-                        for (param, arg) in func.params.iter().zip(args.iter()) {
-                            param_map.insert(param.id, arg.clone());
-                        }
+                        let mut param_map = build_param_map(&func.params, args);
                         let mut result = return_expr.clone();
                         substitute_locals(&mut result, &param_map, next_local_id);
                         return Some((vec![], result));
@@ -980,16 +1002,24 @@ fn try_inline_simple_call(
                             matches!(s, Stmt::Let { mutable: false, init: Some(_), .. })
                         });
                         if all_lets {
-                            // Build param substitution map
+                            // Build param substitution map, respecting rest params.
                             let mut param_map: HashMap<LocalId, Expr> = HashMap::new();
-                            for (param, arg) in func.params.iter().zip(args.iter()) {
-                                if is_trivial_expr(arg) {
-                                    param_map.insert(param.id, arg.clone());
+                            let rest_idx = func.params.iter().rposition(|p| p.is_rest);
+                            for (i, param) in func.params.iter().enumerate() {
+                                let arg_expr: Expr = if Some(i) == rest_idx {
+                                    // Collect remaining args into an array.
+                                    Expr::Array(args.get(i..).unwrap_or(&[]).to_vec())
+                                } else if let Some(arg) = args.get(i) {
+                                    arg.clone()
+                                } else {
+                                    continue;
+                                };
+                                if is_trivial_expr(&arg_expr) {
+                                    param_map.insert(param.id, arg_expr);
                                 } else {
                                     let fresh = *next_local_id;
                                     *next_local_id += 1;
                                     param_map.insert(param.id, Expr::LocalGet(fresh));
-                                    // We'll create the Let for this fresh id below
                                 }
                             }
 
@@ -1006,16 +1036,24 @@ fn try_inline_simple_call(
                             // Build setup stmts: param Lets (for non-trivial args) + body Lets
                             let mut setup: Vec<Stmt> = Vec::new();
 
-                            // First, add Lets for non-trivial param args
-                            for (param, arg) in func.params.iter().zip(args.iter()) {
-                                if !is_trivial_expr(arg) {
+                            // First, add Lets for non-trivial param args (incl. rest array).
+                            let rest_idx2 = func.params.iter().rposition(|p| p.is_rest);
+                            for (i, param) in func.params.iter().enumerate() {
+                                let arg_val = if Some(i) == rest_idx2 {
+                                    Expr::Array(args.get(i..).unwrap_or(&[]).to_vec())
+                                } else if let Some(arg) = args.get(i) {
+                                    arg.clone()
+                                } else {
+                                    continue;
+                                };
+                                if !is_trivial_expr(&arg_val) {
                                     if let Some(Expr::LocalGet(fresh_id)) = param_map.get(&param.id) {
                                         setup.push(Stmt::Let {
                                             id: *fresh_id,
                                             name: param.name.clone(),
                                             ty: param.ty.clone(),
                                             mutable: false,
-                                            init: Some(arg.clone()),
+                                            init: Some(arg_val),
                                         });
                                     }
                                 }

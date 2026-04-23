@@ -5003,43 +5003,69 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         Expr::ClassRef(_) => Ok(double_literal(0.0)),
 
         // -------- CallSpread: function call with spread arguments --------
-        // The common shape is `fn(...args)` — single spread, no regular
-        // args, callee is a known FuncRef whose declared param count we
-        // can read. Lower the spread source as an array, then extract
-        // expected_count elements via `js_array_get_f64` and call the
-        // function with the unpacked args.
+        // Handles `fn(a, b, ...arr)` and `fn(...arr)` patterns. Two cases:
         //
-        // For unsupported shapes (multiple spread args, mixed regular
-        // + spread, non-FuncRef callees, unknown signature) we fall
-        // through to the previous stub behavior so the program at
-        // least compiles. Those cases need their own follow-up.
+        // A. Callee has a rest parameter (has_rest=true):
+        //    `fn(a, b, ...arr)` → call LLVM fn(a, b, arr) — pass the spread
+        //    source array directly as the rest-array parameter.
+        //
+        // B. Callee has no rest parameter (has_rest=false):
+        //    `fn(a, ...arr)` → unpack arr: fn(a, arr[0], arr[1], ...).
+        //    The spread contributes `declared_count - regular_before -
+        //    regular_after` elements.
+        //
+        // Supported callees: FuncRef (same-module) and ExternFuncRef
+        // (cross-module). All other shapes fall back to the stub.
         Expr::CallSpread { callee, args, .. } => {
             use perry_hir::CallArg;
             let spread_count = args.iter().filter(|a| matches!(a, CallArg::Spread(_))).count();
-            let regular_count = args.iter().filter(|a| matches!(a, CallArg::Expr(_))).count();
 
-            if let Expr::FuncRef(fid) = callee.as_ref() {
-                if spread_count == 1 && regular_count == 0 {
-                    if let (Some(fname), Some(sig)) = (
-                        ctx.func_names.get(fid).cloned(),
-                        ctx.func_signatures.get(fid).copied(),
-                    ) {
-                        let (declared_count, _has_rest, _) = sig;
+            if spread_count == 1 {
+                // Position of the single spread in the arg list.
+                let spread_pos = args.iter()
+                    .position(|a| matches!(a, CallArg::Spread(_)))
+                    .expect("spread_count == 1");
+                let regular_before = spread_pos;
+                let regular_after: Vec<&Expr> = args.iter().skip(spread_pos + 1)
+                    .filter_map(|a| if let CallArg::Expr(e) = a { Some(e) } else { None })
+                    .collect();
 
-                        // Find the spread source expression.
-                        let spread_expr = args.iter().find_map(|a| match a {
-                            CallArg::Spread(e) => Some(e),
-                            _ => None,
-                        }).expect("spread_count == 1 guarantees one Spread");
+                // Build the final lowered argument Vec. Returns None if the
+                // shape is unsupported (falls through to stub).
+                let spread_expr = if let Some(CallArg::Spread(e)) = args.get(spread_pos) {
+                    e
+                } else {
+                    unreachable!("spread_pos points at Spread");
+                };
 
-                        // Lower the spread source as an array.
+                // Shared lowering logic given callee arity + has_rest flag.
+                // Returns None if the shape can't be handled.
+                #[allow(unused_assignments)]
+                let make_args = |ctx: &mut FnCtx<'_>, declared_count: usize, has_rest: bool| -> Result<Option<Vec<String>>> {
+                    let mut lowered: Vec<String> = Vec::with_capacity(declared_count.max(args.len()));
+                    // Regular args before the spread.
+                    for a in args.iter().take(regular_before) {
+                        if let CallArg::Expr(e) = a {
+                            lowered.push(lower_expr(ctx, e)?);
+                        }
+                    }
+                    if has_rest {
+                        // Case A: pass spread source directly as the rest array.
+                        if regular_after.is_empty() {
+                            lowered.push(lower_expr(ctx, spread_expr)?);
+                        } else {
+                            // has_rest + regular args after spread — unsupported.
+                            return Ok(None);
+                        }
+                    } else {
+                        // Case B: unpack spread into fixed param slots.
+                        let spread_slots = declared_count
+                            .saturating_sub(regular_before)
+                            .saturating_sub(regular_after.len());
                         let arr_box = lower_expr(ctx, spread_expr)?;
                         let blk = ctx.block();
                         let arr_handle = unbox_to_i64(blk, &arr_box);
-
-                        // Extract `declared_count` elements from the array.
-                        let mut lowered: Vec<String> = Vec::with_capacity(declared_count);
-                        for i in 0..declared_count {
+                        for i in 0..spread_slots {
                             let idx = format!("{}", i);
                             let blk = ctx.block();
                             let elem = blk.call(
@@ -5049,18 +5075,60 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                             );
                             lowered.push(elem);
                         }
+                        for e in &regular_after {
+                            lowered.push(lower_expr(ctx, e)?);
+                        }
+                        let undefined_lit = double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
+                        while lowered.len() < declared_count {
+                            lowered.push(undefined_lit.clone());
+                        }
+                    }
+                    Ok(Some(lowered))
+                };
 
-                        let arg_slices: Vec<(crate::types::LlvmType, &str)> =
-                            lowered.iter().map(|s| (DOUBLE, s.as_str())).collect();
-                        return Ok(ctx.block().call(DOUBLE, &fname, &arg_slices));
+                // ── FuncRef callee (same-module) ─────────────────────────
+                if let Expr::FuncRef(fid) = callee.as_ref() {
+                    if let (Some(fname), Some(sig)) = (
+                        ctx.func_names.get(fid).cloned(),
+                        ctx.func_signatures.get(fid).copied(),
+                    ) {
+                        let (declared_count, has_rest, _) = sig;
+                        if let Some(lowered) = make_args(ctx, declared_count, has_rest)? {
+                            let arg_slices: Vec<(crate::types::LlvmType, &str)> =
+                                lowered.iter().map(|s| (DOUBLE, s.as_str())).collect();
+                            return Ok(ctx.block().call(DOUBLE, &fname, &arg_slices));
+                        }
+                    }
+                }
+
+                // ── ExternFuncRef callee (cross-module) ──────────────────
+                if let Expr::ExternFuncRef { name, .. } = callee.as_ref() {
+                    if let Some(source_prefix) = ctx.import_function_prefixes.get(name.as_str()).cloned() {
+                        let fname = format!("perry_fn_{}__{}", source_prefix, name);
+                        let declared_count = ctx
+                            .imported_func_param_counts
+                            .get(name.as_str())
+                            .copied()
+                            .unwrap_or_else(|| {
+                                // Best-effort: regular args + 1 slot from spread
+                                args.iter().filter(|a| matches!(a, CallArg::Expr(_))).count() + 1
+                            });
+                        let has_rest = ctx.imported_rest_funcs.contains(name.as_str());
+                        if let Some(lowered) = make_args(ctx, declared_count, has_rest)? {
+                            let param_types: Vec<crate::types::LlvmType> =
+                                std::iter::repeat(DOUBLE).take(lowered.len()).collect();
+                            ctx.pending_declares.push((fname.clone(), DOUBLE, param_types));
+                            let arg_slices: Vec<(crate::types::LlvmType, &str)> =
+                                lowered.iter().map(|s| (DOUBLE, s.as_str())).collect();
+                            return Ok(ctx.block().call(DOUBLE, &fname, &arg_slices));
+                        }
                     }
                 }
             }
 
             // Fallback: stub behavior. Lower everything for side effects,
-            // return undefined-equivalent. This keeps the program compiling
-            // for unsupported spread shapes while still being obviously
-            // wrong if executed.
+            // return undefined. Handles multiple spreads, closure callees,
+            // and other unsupported shapes.
             let _ = lower_expr(ctx, callee)?;
             for a in args {
                 match a {
@@ -5069,7 +5137,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     }
                 }
             }
-            Ok(double_literal(0.0))
+            Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)))
         }
 
         // -------- Math.fround --------

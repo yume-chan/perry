@@ -1608,6 +1608,81 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
         }
     }
 
+    // -------- Namespace import function call: `ts.executeCommandLine(...)` --------
+    //
+    // `import * as ts from "..."` makes `ts` a namespace binding. A call
+    // `ts.executeCommandLine(a, b, c)` is lowered as
+    //   `Call { callee: PropertyGet { ExternFuncRef("ts"), "executeCommandLine" }, args }`.
+    // None of the earlier PropertyGet arms fire for this pattern (the
+    // imported-class arm excludes namespace imports; the namespace-through-
+    // class arm requires the property to name a class). Without an explicit
+    // guard here, the call falls through to `js_native_call_method`, which
+    // evaluates `ExternFuncRef("ts")` → `TAG_TRUE` and calls the method on
+    // `TAG_TRUE` — a type confusion that silently returns garbage.
+    //
+    // Fix: when the object is a namespace-import ExternFuncRef and the
+    // property names a real cross-module function (found in
+    // `import_function_prefixes`), emit the direct cross-module call the
+    // same way the plain `ExternFuncRef` arm (above) would.
+    if let Expr::PropertyGet { object, property } = callee {
+        if let Expr::ExternFuncRef { name: ns_name, .. } = object.as_ref() {
+            if ctx.namespace_imports.contains(ns_name.as_str()) {
+                if let Some(source_prefix) = ctx.import_function_prefixes.get(property.as_str()).cloned() {
+                    // Skip enums — they're compile-time constants, not functions.
+                    let is_enum = ctx.enums.keys().any(|(en, _)| en == property.as_str());
+                    // Skip imported classes — static methods are handled
+                    // earlier in the namespace-through-class dispatch arm.
+                    let is_class = ctx.classes.contains_key(property.as_str())
+                        && !ctx.namespace_imports.contains(property.as_str());
+                    if !is_enum && !is_class {
+                        let fname = format!("perry_fn_{}__{}", source_prefix, property);
+                        let declared_count = ctx
+                            .imported_func_param_counts
+                            .get(property.as_str())
+                            .copied()
+                            .unwrap_or(args.len());
+                        let has_rest = ctx.imported_rest_funcs.contains(property.as_str());
+                        let lowered: Vec<String> = if has_rest {
+                            let fixed_count = declared_count.saturating_sub(1);
+                            let mut result: Vec<String> = Vec::with_capacity(declared_count);
+                            for a in args.iter().take(fixed_count) {
+                                result.push(lower_expr(ctx, a)?);
+                            }
+                            let rest_count = args.len().saturating_sub(fixed_count);
+                            let cap = (rest_count as u32).to_string();
+                            let mut arr = ctx.block().call(I64, "js_array_alloc", &[(I32, &cap)]);
+                            for a in args.iter().skip(fixed_count) {
+                                let v = lower_expr(ctx, a)?;
+                                let blk = ctx.block();
+                                arr = blk.call(I64, "js_array_push_f64", &[(I64, &arr), (DOUBLE, &v)]);
+                            }
+                            let rest_box = nanbox_pointer_inline(ctx.block(), &arr);
+                            result.push(rest_box);
+                            result
+                        } else {
+                            let target_arity = declared_count.max(args.len());
+                            let mut result: Vec<String> = Vec::with_capacity(target_arity);
+                            for a in args {
+                                result.push(lower_expr(ctx, a)?);
+                            }
+                            let undefined_lit = double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
+                            while result.len() < target_arity {
+                                result.push(undefined_lit.clone());
+                            }
+                            result
+                        };
+                        let param_types: Vec<crate::types::LlvmType> =
+                            std::iter::repeat(DOUBLE).take(lowered.len()).collect();
+                        ctx.pending_declares.push((fname.clone(), DOUBLE, param_types));
+                        let arg_slices: Vec<(crate::types::LlvmType, &str)> =
+                            lowered.iter().map(|s| (DOUBLE, s.as_str())).collect();
+                        return Ok(ctx.block().call(DOUBLE, &fname, &arg_slices));
+                    }
+                }
+            }
+        }
+    }
+
     // -------- PropertyGet method dispatch via js_native_call_method --------
     //
     // For `recv.method(args)` where the static dispatch above didn't fire
