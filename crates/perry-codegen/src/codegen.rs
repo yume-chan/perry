@@ -85,6 +85,10 @@ pub struct CompileOptions {
     /// Names of imported functions that are async. Codegen needs this to
     /// wrap calls in the promise machinery.
     pub imported_async_funcs: std::collections::HashSet<String>,
+    /// Names of imported functions that have a rest parameter as their last
+    /// declared param. Cross-module call sites use this to bundle trailing
+    /// args into an array before passing them to the callee.
+    pub imported_rest_funcs: std::collections::HashSet<String>,
     /// Type alias map (name → Type) aggregated from all modules. Codegen
     /// uses this to resolve `Named` types in function signatures.
     pub type_aliases: std::collections::HashMap<String, perry_types::Type>,
@@ -189,6 +193,9 @@ pub struct ImportedClass {
 pub(crate) struct CrossModuleCtx {
     pub namespace_imports: std::collections::HashSet<String>,
     pub imported_async_funcs: std::collections::HashSet<String>,
+    /// Names of imported functions whose last parameter is a rest param.
+    /// Used by the ExternFuncRef call path to bundle trailing args into an array.
+    pub imported_rest_funcs: std::collections::HashSet<String>,
     /// FuncIds of locally-defined async functions in this module. Populated
     /// from `hir.functions.is_async`. Used by `is_promise_expr` to refine
     /// `let p = asyncFn();` to `Promise(_)` so subsequent `p.then(cb)`
@@ -547,6 +554,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     let cross_module = CrossModuleCtx {
         namespace_imports: opts.namespace_imports.iter().cloned().collect(),
         imported_async_funcs: opts.imported_async_funcs,
+        imported_rest_funcs: opts.imported_rest_funcs,
         local_async_funcs,
         type_aliases: opts.type_aliases,
         imported_func_param_counts: opts.imported_func_param_counts,
@@ -1732,6 +1740,7 @@ fn compile_function(
         local_closure_func_ids: HashMap::new(),
         namespace_imports: &cross_module.namespace_imports,
         imported_async_funcs: &cross_module.imported_async_funcs,
+        imported_rest_funcs: &cross_module.imported_rest_funcs,
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
         imported_func_param_counts: &cross_module.imported_func_param_counts,
@@ -2006,6 +2015,7 @@ fn compile_closure(
         local_closure_func_ids: HashMap::new(),
         namespace_imports: &cross_module.namespace_imports,
         imported_async_funcs: &cross_module.imported_async_funcs,
+        imported_rest_funcs: &cross_module.imported_rest_funcs,
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
         imported_func_param_counts: &cross_module.imported_func_param_counts,
@@ -2178,6 +2188,7 @@ fn compile_method(
         local_closure_func_ids: HashMap::new(),
         namespace_imports: &cross_module.namespace_imports,
         imported_async_funcs: &cross_module.imported_async_funcs,
+        imported_rest_funcs: &cross_module.imported_rest_funcs,
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
         imported_func_param_counts: &cross_module.imported_func_param_counts,
@@ -2385,6 +2396,7 @@ fn compile_module_entry(
             local_closure_func_ids: HashMap::new(),
             namespace_imports: &cross_module.namespace_imports,
             imported_async_funcs: &cross_module.imported_async_funcs,
+        imported_rest_funcs: &cross_module.imported_rest_funcs,
         local_async_funcs: &cross_module.local_async_funcs,
             type_aliases: &cross_module.type_aliases,
             imported_func_param_counts: &cross_module.imported_func_param_counts,
@@ -2592,6 +2604,7 @@ fn compile_module_entry(
             local_closure_func_ids: HashMap::new(),
             namespace_imports: &cross_module.namespace_imports,
             imported_async_funcs: &cross_module.imported_async_funcs,
+        imported_rest_funcs: &cross_module.imported_rest_funcs,
         local_async_funcs: &cross_module.local_async_funcs,
             type_aliases: &cross_module.type_aliases,
             imported_func_param_counts: &cross_module.imported_func_param_counts,
@@ -2982,6 +2995,7 @@ fn compile_static_method(
         local_closure_func_ids: HashMap::new(),
         namespace_imports: &cross_module.namespace_imports,
         imported_async_funcs: &cross_module.imported_async_funcs,
+        imported_rest_funcs: &cross_module.imported_rest_funcs,
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
         imported_func_param_counts: &cross_module.imported_func_param_counts,

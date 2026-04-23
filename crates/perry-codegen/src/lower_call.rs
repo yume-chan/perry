@@ -352,25 +352,57 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
         // the missing args (and can apply its defaults). Without this,
         // the d-registers for the missing params hold stale data and
         // the function reads garbage (e.g. alpha = -3e-5 instead of 1).
-        let target_arity = ctx
+        let declared_count = ctx
             .imported_func_param_counts
             .get(name)
             .copied()
-            .unwrap_or(args.len())
-            .max(args.len());
+            .unwrap_or(args.len());
+        let has_rest = ctx.imported_rest_funcs.contains(name.as_str());
+        let mut lowered: Vec<String> = if has_rest {
+            // Rest parameter: bundle all args at and beyond the rest
+            // position (declared_count - 1) into an array, matching
+            // the same-module FuncRef and closure rest-param paths.
+            // Without this, cross-module callers would pass each
+            // trailing arg as a raw double; the callee would receive
+            // a NaN-boxed string/object where it expects a NaN-boxed
+            // array pointer, causing a SIGSEGV in js_is_truthy when
+            // the callee iterates the rest array (e.g. combinePaths
+            // receiving "@types" string instead of ["@types"] array).
+            let fixed_count = declared_count.saturating_sub(1);
+            let mut result: Vec<String> = Vec::with_capacity(declared_count);
+            for a in args.iter().take(fixed_count) {
+                result.push(lower_expr(ctx, a)?);
+            }
+            // Materialize the rest array from the trailing args.
+            let rest_count = args.len().saturating_sub(fixed_count);
+            let cap = (rest_count as u32).to_string();
+            let mut arr = ctx.block().call(I64, "js_array_alloc", &[(I32, &cap)]);
+            for a in args.iter().skip(fixed_count) {
+                let v = lower_expr(ctx, a)?;
+                let blk = ctx.block();
+                arr = blk.call(I64, "js_array_push_f64", &[(I64, &arr), (DOUBLE, &v)]);
+            }
+            let rest_box = nanbox_pointer_inline(ctx.block(), &arr);
+            result.push(rest_box);
+            result
+        } else {
+            let target_arity = declared_count.max(args.len());
+            let mut result: Vec<String> = Vec::with_capacity(target_arity);
+            for a in args {
+                result.push(lower_expr(ctx, a)?);
+            }
+            // Pad with TAG_UNDEFINED for the missing trailing args.
+            let undefined_lit = double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
+            while result.len() < target_arity {
+                result.push(undefined_lit.clone());
+            }
+            result
+        };
+        // The LLVM declare uses the effective (post-bundling) param count.
         let param_types: Vec<crate::types::LlvmType> =
-            std::iter::repeat(DOUBLE).take(target_arity).collect();
+            std::iter::repeat(DOUBLE).take(lowered.len()).collect();
         ctx.pending_declares
             .push((fname.clone(), DOUBLE, param_types));
-        let mut lowered: Vec<String> = Vec::with_capacity(target_arity);
-        for a in args {
-            lowered.push(lower_expr(ctx, a)?);
-        }
-        // Pad with TAG_UNDEFINED for the missing trailing args.
-        let undefined_lit = double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
-        while lowered.len() < target_arity {
-            lowered.push(undefined_lit.clone());
-        }
         let arg_slices: Vec<(crate::types::LlvmType, &str)> =
             lowered.iter().map(|s| (DOUBLE, s.as_str())).collect();
         return Ok(ctx.block().call(DOUBLE, &fname, &arg_slices));

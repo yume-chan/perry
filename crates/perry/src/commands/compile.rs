@@ -3845,6 +3845,9 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
     // without an explicit `Promise<T>` annotation, in which case `func.return_type` is the
     // inner type or `Type::Any` and importers can't infer async-ness from the return type alone.
     let mut exported_async_funcs: BTreeSet<(String, String)> = BTreeSet::new();
+    // Set of exported functions that have a rest parameter as their last param.
+    // Cross-module call sites need this to bundle trailing args into an array.
+    let mut exported_rest_funcs: BTreeSet<(String, String)> = BTreeSet::new();
     for (path, hir_module) in &ctx.native_modules {
         let path_str = path.to_string_lossy().to_string();
         for func in &hir_module.functions {
@@ -3853,6 +3856,9 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                 exported_func_return_types.insert((path_str.clone(), func.name.clone()), func.return_type.clone());
                 if func.is_async {
                     exported_async_funcs.insert((path_str.clone(), func.name.clone()));
+                }
+                if func.params.last().map(|p| p.is_rest).unwrap_or(false) {
+                    exported_rest_funcs.insert((path_str.clone(), func.name.clone()));
                 }
             }
         }
@@ -3864,7 +3870,10 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                 exported_func_param_counts.entry(key.clone()).or_insert(func.params.len());
                 exported_func_return_types.entry(key.clone()).or_insert_with(|| func.return_type.clone());
                 if func.is_async {
-                    exported_async_funcs.insert(key);
+                    exported_async_funcs.insert(key.clone());
+                }
+                if func.params.last().map(|p| p.is_rest).unwrap_or(false) {
+                    exported_rest_funcs.insert(key);
                 }
             }
         }
@@ -3890,6 +3899,9 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                         exported_func_return_types.insert((path_str.clone(), name.clone()), return_type.clone());
                         if *is_async {
                             exported_async_funcs.insert((path_str.clone(), name.clone()));
+                        }
+                        if params.last().map(|p| p.is_rest).unwrap_or(false) {
+                            exported_rest_funcs.insert((path_str.clone(), name.clone()));
                         }
                     }
                 }
@@ -4101,6 +4113,7 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
     loop {
         let mut new_func_entries: Vec<((String, String), perry_types::Type)> = Vec::new();
         let mut new_async_entries: Vec<(String, String)> = Vec::new();
+        let mut new_rest_entries: Vec<(String, String)> = Vec::new();
         for (path, hir_module) in &ctx.native_modules {
             let path_str = path.to_string_lossy().to_string();
             for export in &hir_module.exports {
@@ -4119,7 +4132,12 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                                     if exported_async_funcs.contains(&async_key)
                                         && !exported_async_funcs.contains(&propagated_async_key)
                                     {
-                                        new_async_entries.push(propagated_async_key);
+                                        new_async_entries.push(propagated_async_key.clone());
+                                    }
+                                    if exported_rest_funcs.contains(&async_key)
+                                        && !exported_rest_funcs.contains(&propagated_async_key)
+                                    {
+                                        new_rest_entries.push(propagated_async_key);
                                     }
                                 }
                             }
@@ -4139,7 +4157,12 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                                     if exported_async_funcs.contains(&async_key)
                                         && !exported_async_funcs.contains(&propagated_async_key)
                                     {
-                                        new_async_entries.push(propagated_async_key);
+                                        new_async_entries.push(propagated_async_key.clone());
+                                    }
+                                    if exported_rest_funcs.contains(&async_key)
+                                        && !exported_rest_funcs.contains(&propagated_async_key)
+                                    {
+                                        new_rest_entries.push(propagated_async_key);
                                     }
                                 }
                             }
@@ -4168,7 +4191,12 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                                             if exported_async_funcs.contains(&key_src)
                                                 && !exported_async_funcs.contains(&propagated_async_key)
                                             {
-                                                new_async_entries.push(propagated_async_key);
+                                                new_async_entries.push(propagated_async_key.clone());
+                                            }
+                                            if exported_rest_funcs.contains(&key_src)
+                                                && !exported_rest_funcs.contains(&propagated_async_key)
+                                            {
+                                                new_rest_entries.push(propagated_async_key);
                                             }
                                         }
                                     }
@@ -4180,12 +4208,15 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                 }
             }
         }
-        if new_func_entries.is_empty() && new_async_entries.is_empty() { break; }
+        if new_func_entries.is_empty() && new_async_entries.is_empty() && new_rest_entries.is_empty() { break; }
         for (key, return_type) in new_func_entries {
             exported_func_return_types.insert(key, return_type);
         }
         for key in new_async_entries {
             exported_async_funcs.insert(key);
+        }
+        for key in new_rest_entries {
+            exported_rest_funcs.insert(key);
         }
     }
 
@@ -4368,6 +4399,7 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
             let mut imported_classes: Vec<perry_codegen::ImportedClass> = Vec::new();
             let mut imported_enums: Vec<(String, Vec<(String, perry_hir::EnumValue)>)> = Vec::new();
             let mut imported_async_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut imported_rest_set: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut imported_param_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
             let mut imported_return_types: std::collections::HashMap<String, perry_types::Type> = std::collections::HashMap::new();
             let mut imported_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -4404,6 +4436,9 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                                 let key = (origin_path.clone(), export_name.clone());
                                 if let Some(&param_count) = exported_func_param_counts.get(&key) {
                                     imported_param_counts.insert(export_name.clone(), param_count);
+                                }
+                                if exported_rest_funcs.contains(&key) {
+                                    imported_rest_set.insert(export_name.clone());
                                 }
                                 if let Some(class) = exported_classes.get(&key) {
                                   if imported_classes.iter().all(|c| c.name != class.name) {
@@ -4501,6 +4536,14 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                         imported_async_set.insert(local_name.clone());
                         if local_name != exported_name {
                             imported_async_set.insert(exported_name.clone());
+                        }
+                    }
+
+                    // Imported rest-param functions
+                    if exported_rest_funcs.contains(&key) {
+                        imported_rest_set.insert(local_name.clone());
+                        if local_name != exported_name {
+                            imported_rest_set.insert(exported_name.clone());
                         }
                     }
 
@@ -4635,6 +4678,7 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                 imported_classes,
                 imported_enums,
                 imported_async_funcs: imported_async_set,
+                imported_rest_funcs: imported_rest_set,
                 type_aliases: type_alias_map,
                 imported_func_param_counts: imported_param_counts,
                 imported_func_return_types: imported_return_types,

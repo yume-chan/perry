@@ -279,6 +279,10 @@ pub(crate) struct FnCtx<'a> {
     /// Names of imported functions that are async. Used to wrap
     /// cross-module calls in promise machinery.
     pub imported_async_funcs: &'a std::collections::HashSet<String>,
+    /// Names of imported functions whose last parameter is a rest param.
+    /// The ExternFuncRef call path uses this to bundle trailing args into
+    /// an array before calling the function (same as the FuncRef path).
+    pub imported_rest_funcs: &'a std::collections::HashSet<String>,
     /// FuncIds of locally-defined async functions in this module.
     /// Used by `is_promise_expr` to recognize that `let p = asyncFn();`
     /// produces a Promise so subsequent `p.then(cb)` chains route
