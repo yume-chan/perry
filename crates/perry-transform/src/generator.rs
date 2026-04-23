@@ -661,6 +661,7 @@ fn transform_generator_function(func: &mut Function, next_local_id: &mut u32, ne
         captures_this: false,
         enclosing_class: None,
         is_async: false,
+        scope_capture_analysis: None,
     };
 
     // Build .return(value) closure — immediately marks done and returns {value, done: true}
@@ -683,6 +684,7 @@ fn transform_generator_function(func: &mut Function, next_local_id: &mut u32, ne
         captures_this: false,
         enclosing_class: None,
         is_async: false,
+        scope_capture_analysis: None,
     };
 
     // Build .throw(error) closure.
@@ -730,6 +732,7 @@ fn transform_generator_function(func: &mut Function, next_local_id: &mut u32, ne
         captures_this: false,
         enclosing_class: None,
         is_async: false,
+        scope_capture_analysis: None,
     };
 
     // return { next: <closure>, return: <closure>, throw: <closure> }

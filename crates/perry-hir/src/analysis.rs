@@ -1840,3 +1840,97 @@ fn replace_this_in_expr(expr: &mut Expr, this_id: LocalId) {
     }
 }
 
+/// Collect all LocalIds that are defined (via Let statements) in a statement block.
+/// Does NOT recurse into nested closures - those have their own scope.
+pub fn collect_defined_locals_stmt(stmt: &Stmt, defined: &mut Vec<LocalId>) {
+    match stmt {
+        Stmt::Let { id, init, .. } => {
+            defined.push(*id);
+            if let Some(expr) = init {
+                collect_defined_locals_expr(expr, defined);
+            }
+        }
+        Stmt::Expr(expr) => collect_defined_locals_expr(expr, defined),
+        Stmt::Return(opt_expr) => {
+            if let Some(expr) = opt_expr {
+                collect_defined_locals_expr(expr, defined);
+            }
+        }
+        Stmt::If { condition, then_branch, else_branch } => {
+            collect_defined_locals_expr(condition, defined);
+            for s in then_branch {
+                collect_defined_locals_stmt(s, defined);
+            }
+            if let Some(else_stmts) = else_branch {
+                for s in else_stmts {
+                    collect_defined_locals_stmt(s, defined);
+                }
+            }
+        }
+        Stmt::While { condition, body } => {
+            collect_defined_locals_expr(condition, defined);
+            for s in body {
+                collect_defined_locals_stmt(s, defined);
+            }
+        }
+        Stmt::DoWhile { body, condition } => {
+            for s in body {
+                collect_defined_locals_stmt(s, defined);
+            }
+            collect_defined_locals_expr(condition, defined);
+        }
+        Stmt::For { init, condition, update, body } => {
+            if let Some(init_stmt) = init {
+                collect_defined_locals_stmt(init_stmt, defined);
+            }
+            if let Some(cond) = condition {
+                collect_defined_locals_expr(cond, defined);
+            }
+            if let Some(upd) = update {
+                collect_defined_locals_expr(upd, defined);
+            }
+            for s in body {
+                collect_defined_locals_stmt(s, defined);
+            }
+        }
+        Stmt::Throw(expr) => collect_defined_locals_expr(expr, defined),
+        Stmt::Try { body, catch, finally } => {
+            for s in body {
+                collect_defined_locals_stmt(s, defined);
+            }
+            if let Some(catch_clause) = catch {
+                if let Some(param_id) = &catch_clause.param {
+                    defined.push(param_id.0);
+                }
+                for s in &catch_clause.body {
+                    collect_defined_locals_stmt(s, defined);
+                }
+            }
+            if let Some(finally_body) = finally {
+                for s in finally_body {
+                    collect_defined_locals_stmt(s, defined);
+                }
+            }
+        }
+        Stmt::Switch { discriminant, cases } => {
+            collect_defined_locals_expr(discriminant, defined);
+            for case in cases {
+                for s in &case.body {
+                    collect_defined_locals_stmt(s, defined);
+                }
+            }
+        }
+        Stmt::Labeled { body, .. } => collect_defined_locals_stmt(body, defined),
+        Stmt::Break | Stmt::Continue | Stmt::LabeledBreak(_) | Stmt::LabeledContinue(_) => {}
+    }
+}
+
+/// Collect all LocalIds defined in an expression (currently just looks for nested statements).
+fn collect_defined_locals_expr(expr: &Expr, _defined: &mut Vec<LocalId>) {
+    match expr {
+        // Don't recurse into closures - they define their own scope
+        Expr::Closure { .. } => {}
+        // Most other expressions don't define locals
+        _ => {}
+    }
+}

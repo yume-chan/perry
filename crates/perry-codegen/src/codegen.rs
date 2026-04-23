@@ -408,6 +408,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 is_exported: false,
                 captures: Vec::new(),
                 decorators: Vec::new(),
+                scope_capture_analysis: None,
             }).collect(),
             getters: Vec::new(),
             setters: Vec::new(),
@@ -1345,6 +1346,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 is_exported: false,
                 captures: ctor_body.2,
                 decorators: Vec::new(),
+                scope_capture_analysis: None,
             };
             compile_method(
                 &mut llmod, class, &ctor_as_method, &func_names, &mut strings,

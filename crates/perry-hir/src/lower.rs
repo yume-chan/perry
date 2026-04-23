@@ -334,6 +334,7 @@ impl LoweringContext {
                     captures_this: false,
                     enclosing_class: None,
                     is_async: false,
+                    scope_capture_analysis: None,
                 };
             }
         }
@@ -9843,6 +9844,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                                         is_exported: false,
                                         captures: Vec::new(),
                                         decorators: Vec::new(),
+                                        scope_capture_analysis: None,
                                     });
                                     Expr::FuncRef(func_id)
                                 } else {
@@ -9872,6 +9874,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                                         captures_this,
                                         enclosing_class,
                                         is_async: method.function.is_async,
+                                        scope_capture_analysis: None,
                                     }
                                 };
                                 match method_key {
@@ -9984,6 +9987,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                 captures_this: false,
                 enclosing_class: None,
                 is_async: false,
+                    scope_capture_analysis: None,
             };
             Ok(Expr::Call {
                 callee: Box::new(closure),
@@ -10491,6 +10495,16 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                 None
             };
 
+            // Analyze captures for scope object architecture
+            let mut all_locals = Vec::new();
+            for param in &params {
+                all_locals.push(param.id);
+            }
+            for stmt in &body {
+                collect_defined_locals_stmt(stmt, &mut all_locals);
+            }
+            let capture_analysis = crate::capture_analysis::analyze_captures(&body, &all_locals);
+
             Ok(Expr::Closure {
                 func_id,
                 params,
@@ -10501,6 +10515,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                 captures_this,
                 enclosing_class,
                 is_async: arrow.is_async,
+                scope_capture_analysis: Some(Box::new(capture_analysis)),
             })
         }
         ast::Expr::Fn(fn_expr) => {
@@ -10629,6 +10644,16 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
             // (they have their own `this` binding determined by how they're called)
             let captures_this = false;
 
+            // Analyze captures for scope object architecture
+            let mut all_locals = Vec::new();
+            for param in &params {
+                all_locals.push(param.id);
+            }
+            for stmt in &body {
+                collect_defined_locals_stmt(stmt, &mut all_locals);
+            }
+            let capture_analysis = crate::capture_analysis::analyze_captures(&body, &all_locals);
+
             Ok(Expr::Closure {
                 func_id,
                 params,
@@ -10639,6 +10664,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                 captures_this,
                 enclosing_class: None,
                 is_async: fn_expr.function.is_async,
+                scope_capture_analysis: Some(Box::new(capture_analysis)),
             })
         }
         ast::Expr::Await(await_expr) => {
@@ -11299,6 +11325,7 @@ fn try_desugar_reactive_text(
             captures_this: false,
             enclosing_class: None,
             is_async: false,
+                    scope_capture_analysis: None,
         };
 
         outer_body.push(Stmt::Expr(Expr::NativeMethodCall {
@@ -11335,6 +11362,7 @@ fn try_desugar_reactive_text(
         captures_this: false,
         enclosing_class: None,
         is_async: false,
+                    scope_capture_analysis: None,
     };
 
     Ok(Some(Expr::Call {
@@ -11551,6 +11579,7 @@ fn try_desugar_reactive_animate(
             captures_this: false,
             enclosing_class: None,
             is_async: false,
+                    scope_capture_analysis: None,
         };
 
         outer_body.push(Stmt::Expr(Expr::NativeMethodCall {
@@ -11587,6 +11616,7 @@ fn try_desugar_reactive_animate(
         captures_this: false,
         enclosing_class: None,
         is_async: false,
+                    scope_capture_analysis: None,
     };
 
     Ok(Some(Expr::Call {

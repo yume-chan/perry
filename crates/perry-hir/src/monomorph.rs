@@ -1304,7 +1304,7 @@ fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Type>) -> Expr {
         ),
 
         // Closure
-        Expr::Closure { func_id, params, return_type, body, captures, mutable_captures, captures_this, enclosing_class, is_async } => {
+        Expr::Closure { func_id, params, return_type, body, captures, mutable_captures, captures_this, enclosing_class, is_async, scope_capture_analysis } => {
             Expr::Closure {
                 func_id: *func_id,
                 params: params.iter().map(|p| Param {
@@ -1321,6 +1321,7 @@ fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Type>) -> Expr {
                 captures_this: *captures_this,
                 enclosing_class: enclosing_class.clone(),
                 is_async: *is_async,
+                scope_capture_analysis: scope_capture_analysis.clone(),
             }
         }
 
@@ -1498,6 +1499,7 @@ pub fn specialize_function(
         is_exported: false, // Specialized versions are internal
         captures: func.captures.clone(),
         decorators: func.decorators.clone(),
+        scope_capture_analysis: None,
     }
 }
 
@@ -1551,7 +1553,9 @@ pub fn specialize_class(
                 is_exported: false,
                 captures: ctor.captures.clone(),
                 decorators: ctor.decorators.clone(),
-            }
+                        scope_capture_analysis: None,
+            
+}
         }),
         methods: class.methods.iter().map(|m| {
             Function {
@@ -1572,7 +1576,9 @@ pub fn specialize_class(
                 is_exported: false,
                 captures: m.captures.clone(),
                 decorators: m.decorators.clone(),
-            }
+                        scope_capture_analysis: None,
+            
+}
         }).collect(),
         getters: class.getters.iter().map(|(name, f)| {
             (name.clone(), Function {
@@ -1587,7 +1593,9 @@ pub fn specialize_class(
                 is_exported: false,
                 captures: f.captures.clone(),
                 decorators: f.decorators.clone(),
-            })
+                        scope_capture_analysis: None,
+            
+})
         }).collect(),
         setters: class.setters.iter().map(|(name, f)| {
             (name.clone(), Function {
@@ -1608,7 +1616,9 @@ pub fn specialize_class(
                 is_exported: false,
                 captures: f.captures.clone(),
                 decorators: f.decorators.clone(),
-            })
+                        scope_capture_analysis: None,
+            
+})
         }).collect(),
         static_fields: class.static_fields.clone(),
         static_methods: class.static_methods.clone(),
@@ -2934,7 +2944,9 @@ mod tests {
             is_exported: true,
             captures: vec![],
             decorators: vec![],
-        };
+                    scope_capture_analysis: None,
+        
+};
 
         // Create a module with the generic function and a call to it with type args
         let mut module = Module::new("test");
@@ -2989,7 +3001,9 @@ mod tests {
             is_exported: true,
             captures: vec![],
             decorators: vec![],
-        };
+                    scope_capture_analysis: None,
+        
+};
 
         let mut module = Module::new("test");
         module.functions.push(identity_func);
@@ -3044,7 +3058,9 @@ mod tests {
             is_exported: true,
             captures: vec![],
             decorators: vec![],
-        };
+                    scope_capture_analysis: None,
+        
+};
 
         let mut module = Module::new("test");
         module.functions.push(identity_func);
@@ -3112,7 +3128,9 @@ mod tests {
             is_exported: true,
             captures: vec![],
             decorators: vec![],
-        };
+                    scope_capture_analysis: None,
+        
+};
 
         let mut module = Module::new("test");
         module.functions.push(identity_func);

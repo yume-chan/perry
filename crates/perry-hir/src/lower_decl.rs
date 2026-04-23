@@ -360,6 +360,12 @@ pub(crate) fn lower_fn_decl(ctx: &mut LoweringContext, fn_decl: &ast::FnDecl) ->
         }
     }
 
+    // Collect all locals in this scope before exiting
+    let scope_locals: Vec<LocalId> = ctx.locals[scope_mark.0..]
+        .iter()
+        .map(|(_, id, _)| *id)
+        .collect();
+
     ctx.exit_scope(scope_mark);
 
     // Exit type parameter scope
@@ -376,6 +382,14 @@ pub(crate) fn lower_fn_decl(ctx: &mut LoweringContext, fn_decl: &ast::FnDecl) ->
         }
     }
 
+    // Analyze captures: determine which variables are captured by closures
+    let mut all_locals = Vec::new();
+    for param in &params {
+        all_locals.push(param.id);
+    }
+    all_locals.extend(scope_locals);
+    let capture_analysis = crate::capture_analysis::analyze_captures(&body, &all_locals);
+
     Ok(Function {
         id: func_id,
         name,
@@ -388,6 +402,7 @@ pub(crate) fn lower_fn_decl(ctx: &mut LoweringContext, fn_decl: &ast::FnDecl) ->
         is_exported: false,
         captures: Vec::new(),
         decorators: Vec::new(),
+        scope_capture_analysis: Some(Box::new(capture_analysis)),
     })
 }
 
@@ -558,6 +573,7 @@ pub(crate) fn lower_class_decl(ctx: &mut LoweringContext, class_decl: &ast::Clas
                                     is_exported: false,
                                     captures: Vec::new(),
                                     decorators: Vec::new(),
+                                    scope_capture_analysis: None,
                                 };
                                 ctx.pending_functions.push(top_fn);
                                 continue;
@@ -621,6 +637,7 @@ pub(crate) fn lower_class_decl(ctx: &mut LoweringContext, class_decl: &ast::Clas
                                 is_exported: false,
                                 captures: Vec::new(),
                                 decorators: Vec::new(),
+                                scope_capture_analysis: None,
                             };
                             ctx.pending_functions.push(top_fn);
                             ctx.iterator_func_for_class.insert(name.clone(), top_fn_id);
@@ -712,6 +729,7 @@ pub(crate) fn lower_class_decl(ctx: &mut LoweringContext, class_decl: &ast::Clas
                     is_exported: false,
                     captures: Vec::new(),
                     decorators: Vec::new(),
+                    scope_capture_analysis: None,
                 });
             }
             _ => {}
@@ -1029,6 +1047,7 @@ pub(crate) fn lower_class_from_ast(ctx: &mut LoweringContext, class: &ast::Class
                     is_exported: false,
                     captures: Vec::new(),
                     decorators: Vec::new(),
+                    scope_capture_analysis: None,
                 });
             }
             _ => {}
@@ -1391,6 +1410,7 @@ pub(crate) fn lower_constructor(ctx: &mut LoweringContext, class_name: &str, cto
         is_exported: false,
         captures: Vec::new(),
         decorators: Vec::new(),
+        scope_capture_analysis: None,
     })
 }
 
@@ -1481,6 +1501,7 @@ pub(crate) fn lower_class_method(ctx: &mut LoweringContext, method: &ast::ClassM
         is_exported: false,
         captures: Vec::new(),
         decorators,
+        scope_capture_analysis: None,
     })
 }
 
@@ -1535,6 +1556,7 @@ pub(crate) fn lower_getter_method(ctx: &mut LoweringContext, method: &ast::Class
         is_exported: false,
         captures: Vec::new(),
         decorators: Vec::new(),
+        scope_capture_analysis: None,
     })
 }
 
@@ -1587,6 +1609,7 @@ pub(crate) fn lower_setter_method(ctx: &mut LoweringContext, method: &ast::Class
         is_exported: false,
         captures: Vec::new(),
         decorators: Vec::new(),
+        scope_capture_analysis: None,
     })
 }
 
@@ -1682,6 +1705,7 @@ pub(crate) fn lower_private_method(ctx: &mut LoweringContext, method: &ast::Priv
         is_exported: false,
         captures: Vec::new(),
         decorators: Vec::new(),
+        scope_capture_analysis: None,
     })
 }
 
@@ -1718,6 +1742,7 @@ pub(crate) fn lower_private_getter(ctx: &mut LoweringContext, method: &ast::Priv
         is_exported: false,
         captures: Vec::new(),
         decorators: Vec::new(),
+        scope_capture_analysis: None,
     })
 }
 
@@ -1761,6 +1786,7 @@ pub(crate) fn lower_private_setter(ctx: &mut LoweringContext, method: &ast::Priv
         is_exported: false,
         captures: Vec::new(),
         decorators: Vec::new(),
+        scope_capture_analysis: None,
     })
 }
 
@@ -2191,6 +2217,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                     captures_this: false,
                     enclosing_class: None,
                     is_async: fn_decl.function.is_async,
+                    scope_capture_analysis: None,
                 };
                 result.push(Stmt::Let {
                     id: local_id,

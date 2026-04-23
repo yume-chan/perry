@@ -4,6 +4,7 @@
 //! easier to compile to native code than the raw AST.
 
 use perry_types::{FuncId, GlobalId, LocalId, Type, TypeParam};
+use crate::scope::CaptureAnalysis;
 
 /// TypedArray element-kind tags. Must match `crates/perry-runtime/src/typedarray.rs`.
 pub const TYPED_ARRAY_KIND_INT8: u8 = 0;
@@ -658,6 +659,8 @@ pub struct Function {
     pub captures: Vec<LocalId>,
     /// Decorators applied to this function/method
     pub decorators: Vec<Decorator>,
+    /// Scope object capture analysis (populated after lowering)
+    pub scope_capture_analysis: Option<Box<CaptureAnalysis>>,
 }
 
 /// A function parameter
@@ -1575,6 +1578,8 @@ pub enum Expr {
         enclosing_class: Option<String>,
         /// Whether this is an async closure
         is_async: bool,
+        /// Scope object capture analysis (populated after analysis pass)
+        scope_capture_analysis: Option<Box<CaptureAnalysis>>,
     },
 
     // RegExp operations
