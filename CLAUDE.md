@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.140
+**Current Version:** 0.5.141
 
 ## TypeScript Parity Status
 
@@ -162,6 +162,7 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 
 Keep entries to 1-2 lines max. Full details in CHANGELOG.md.
 
+- **v0.5.141** — Implement nested function hoisting: `lower_block_stmt` and `lower_block_stmt_scoped` now use two-pass lowering where all `Fn` declarations are lowered first, then other statements. `pre_register_all_declarations` scans for function declarations and pre-registers their IDs so forward calls resolve correctly. This implements JavaScript function hoisting semantics where nested functions are available throughout their scope, even when called before their source declaration (fixes cases like `const x = fn(); function fn() { ... }`).
 - **v0.5.140** — Fix nested function calls returning 0.0: Pre-register all variable declarations (functions, let, const, var) in a block scope, then hoist all Fn declarations to run before other statements. This implements JavaScript function hoisting semantics where nested functions are available throughout their scope even when called before their source declaration. Changes in `lower_block_stmt` and `lower_block_stmt_scoped` now process Fn declarations in a first pass, then other statements in a second pass; `pre_register_all_declarations` scans all declarations upfront and registers their locals, ensuring calls to undeclared-yet functions resolve to the correct closure values instead of 0.0.
 - **v0.5.139** — Start namespace-import canonicalization: HIR lowering now rewrites first-hop namespace member refs (`ns.foo`) to direct `ExternFuncRef("foo")`, and namespace-import metadata now marks exported vars correctly so value imports route through getters. LLVM no longer emits importer-local `__perry_wrap_extern_*` / `__perry_extern_closure_*`; ExternFuncRef-as-value reuses source-module `__perry_static_closure_perry_fn_<src>__<name>` with explicit external-global declarations in importers and externally-linkable source closure constants.
 - **v0.5.138** — Fix two `tsc` execution issues: (1) Namespace-import function calls (`ts.executeCommandLine(...)`) were falling through to `js_native_call_method` — added explicit dispatch in `lower_call.rs` that detects `PropertyGet { ExternFuncRef(ns_import), fn_name }` and emits a direct cross-module call via `perry_fn_<prefix>__<name>`. (2) `CallSpread` with mixed regular+spread args (e.g. `createCompilerDiagnostic(message, ...args)`) returned stub 0.0 — rewrote the `CallSpread` lowering in `expr.rs` to handle both has_rest and fixed-arity callees for `FuncRef` and `ExternFuncRef`. (3) Inliner bug: when a single-return function with a rest param is inlined at a call site, the rest param was substituted with the raw trailing arg instead of wrapping trailing args in an `Expr::Array(...)` — fixed in `build_param_map` and Pattern 2 in `inline.rs`.
