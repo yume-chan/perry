@@ -1788,51 +1788,77 @@ pub(crate) fn lower_private_prop(ctx: &mut LoweringContext, prop: &ast::PrivateP
     })
 }
 
-/// Pre-register and lower nested function declarations in a block before lowering other statements.
-/// This implements JavaScript function hoisting: all function declarations are
-/// available throughout the entire block, even before their declaration appears.
-fn pre_register_and_hoist_nested_functions(ctx: &mut LoweringContext, block: &ast::BlockStmt) -> Result<Vec<Stmt>> {
-    // First pass: pre-register all nested functions (so they can reference each other)
+/// Pre-register all variable declarations (functions, let, const, var) in a block.
+/// This implements JavaScript function hoisting and ensures closures can capture
+/// variables regardless of declaration order.
+fn pre_register_all_declarations(ctx: &mut LoweringContext, block: &ast::BlockStmt) -> Result<()> {
     for stmt in &block.stmts {
-        if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
-            if !fn_decl.function.is_generator && fn_decl.function.body.is_some() {
-                let func_name = fn_decl.ident.sym.to_string();
-                if ctx.lookup_func(&func_name).is_none() {
-                    let func_id = ctx.fresh_func();
-                    ctx.register_func(func_name, func_id);
+        match stmt {
+            // Nested function declarations
+            ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) => {
+                if !fn_decl.function.is_generator && fn_decl.function.body.is_some() {
+                    let func_name = fn_decl.ident.sym.to_string();
+                    
+                    // Pre-register the function ID if not already registered
+                    if ctx.lookup_func(&func_name).is_none() {
+                        let func_id = ctx.fresh_func();
+                        ctx.register_func(func_name.clone(), func_id);
+                    }
+                    
+                    // Pre-define the local variable so calls can reference it
+                    // even if they appear before the Fn declaration
+                    if ctx.lookup_local(&func_name).is_none() {
+                        ctx.define_local(func_name, Type::Any);
+                    }
                 }
             }
-        }
-    }
-    
-    // Second pass: lower all nested function declarations
-    let mut hoisted_stmts = Vec::new();
-    for stmt in &block.stmts {
-        if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
-            if !fn_decl.function.is_generator && fn_decl.function.body.is_some() {
-                let func_stmts = lower_body_stmt(ctx, stmt)?;
-                hoisted_stmts.extend(func_stmts);
+            // Variable declarations (let, const, var)
+            ast::Stmt::Decl(ast::Decl::Var(var_decl)) => {
+                for decl in &var_decl.decls {
+                    if let Ok(name) = get_pat_name(&decl.name) {
+                        // Pre-define so closures can capture it
+                        if ctx.lookup_local(&name).is_none() {
+                            ctx.define_local(name, Type::Any);
+                        }
+                    }
+                }
             }
+            _ => {}
         }
     }
-    
-    Ok(hoisted_stmts)
+    Ok(())
 }
 
 pub(crate) fn lower_block_stmt(ctx: &mut LoweringContext, block: &ast::BlockStmt) -> Result<Vec<Stmt>> {
-    // First: process nested function declarations and hoist them to the beginning
-    let mut stmts = pre_register_and_hoist_nested_functions(ctx, block)?;
+    // Pre-register all declarations so nested functions can reference each other
+    // and closures can capture variables regardless of declaration order
+    pre_register_all_declarations(ctx, block)?;
     
-    // Then: process all other statements
+    let mut stmts = Vec::new();
+    
+    // Process Fn declarations first (in source order) to implement hoisting
+    // This ensures all nested functions are initialized before other statements run
     for stmt in &block.stmts {
-        // Skip the function declarations we already processed
         if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
-            if fn_decl.function.body.is_some() && !fn_decl.function.is_generator {
-                continue;
+            if fn_decl.function.body.is_some() {
+                stmts.extend(lower_body_stmt(ctx, stmt)?);
             }
         }
-        stmts.extend(lower_body_stmt(ctx, stmt)?);
     }
+    
+    // Then process all other statements in order
+    for stmt in &block.stmts {
+        match stmt {
+            ast::Stmt::Decl(ast::Decl::Fn(_)) => {
+                // Skip function declarations (already processed in first pass)
+                continue;
+            }
+            _ => {
+                stmts.extend(lower_body_stmt(ctx, stmt)?);
+            }
+        }
+    }
+    
     Ok(stmts)
 }
 
@@ -1842,19 +1868,35 @@ pub(crate) fn lower_block_stmt(ctx: &mut LoweringContext, block: &ast::BlockStmt
 pub(crate) fn lower_block_stmt_scoped(ctx: &mut LoweringContext, block: &ast::BlockStmt) -> Result<Vec<Stmt>> {
     let mark = ctx.push_block_scope();
     
-    // First: process nested function declarations and hoist them to the beginning
-    let mut stmts = pre_register_and_hoist_nested_functions(ctx, block)?;
+    // Pre-register all declarations so nested functions can reference each other
+    // and closures can capture variables regardless of declaration order
+    pre_register_all_declarations(ctx, block)?;
     
-    // Then: process all other statements
+    let mut stmts = Vec::new();
+    
+    // Process Fn declarations first (in source order) to implement hoisting
+    // This ensures all nested functions are initialized before other statements run
     for stmt in &block.stmts {
-        // Skip the function declarations we already processed
         if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
-            if fn_decl.function.body.is_some() && !fn_decl.function.is_generator {
-                continue;
+            if fn_decl.function.body.is_some() {
+                stmts.extend(lower_body_stmt(ctx, stmt)?);
             }
         }
-        stmts.extend(lower_body_stmt(ctx, stmt)?);
     }
+    
+    // Then process all other statements in order
+    for stmt in &block.stmts {
+        match stmt {
+            ast::Stmt::Decl(ast::Decl::Fn(_)) => {
+                // Skip function declarations (already processed in first pass)
+                continue;
+            }
+            _ => {
+                stmts.extend(lower_body_stmt(ctx, stmt)?);
+            }
+        }
+    }
+    
     ctx.pop_block_scope(mark);
     Ok(stmts)
 }
