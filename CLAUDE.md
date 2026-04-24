@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.141
+**Current Version:** 0.5.142
 
 ## TypeScript Parity Status
 
@@ -161,6 +161,8 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 ## Recent Changes
 
 Keep entries to 1-2 lines max. Full details in CHANGELOG.md.
+
+- **v0.5.142** — Fix critical closure capture double-lowering bug via caching auto_captures in FnCtx. Closures were lowered twice with different contexts, causing compute_auto_captures to return inconsistent capture indices, resulting in SIGSEGV crashes in tsc.ts. Now all closures store/retrieve consistent captures. Fixes parseStrings(), nested function closures, and array.map closures with outer variable captures.
 
 - **v0.5.141** — Implement nested function hoisting: `lower_block_stmt` and `lower_block_stmt_scoped` now use two-pass lowering where all `Fn` declarations are lowered first, then other statements. `pre_register_all_declarations` scans for function declarations and pre-registers their IDs so forward calls resolve correctly. This implements JavaScript function hoisting semantics where nested functions are available throughout their scope, even when called before their source declaration (fixes cases like `const x = fn(); function fn() { ... }`).
 - **v0.5.140** — Fix nested function calls returning 0.0: Pre-register all variable declarations (functions, let, const, var) in a block scope, then hoist all Fn declarations to run before other statements. This implements JavaScript function hoisting semantics where nested functions are available throughout their scope even when called before their source declaration. Changes in `lower_block_stmt` and `lower_block_stmt_scoped` now process Fn declarations in a first pass, then other statements in a second pass; `pre_register_all_declarations` scans all declarations upfront and registers their locals, ensuring calls to undeclared-yet functions resolve to the correct closure values instead of 0.0.
