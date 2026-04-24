@@ -64,6 +64,8 @@ pub struct LoweringContext {
     pub(crate) native_instances: Vec<(String, String, String)>,
     /// Current class being lowered (for arrow function `this` capture)
     pub(crate) current_class: Option<String>,
+    /// Current enclosing function being lowered (for setting enclosing_func_id in closures)
+    pub(crate) current_enclosing_func_id: Option<FuncId>,
     /// Extern function types: name -> (param_types, return_type)
     /// Stores type information for declare function statements (FFI)
     pub(crate) extern_func_types: Vec<(String, Vec<Type>, Type)>,
@@ -208,6 +210,7 @@ impl LoweringContext {
             type_param_scopes: Vec::new(),
             native_instances: Vec::new(),
             current_class: None,
+            current_enclosing_func_id: None,
             extern_func_types: Vec::new(),
             source_file_path: source_file_path.into(),
             exportable_object_vars: HashSet::new(),
@@ -319,6 +322,7 @@ impl LoweringContext {
                     _ => unreachable!(),
                 };
                 return Expr::Closure {
+                    enclosing_func_id: None,
                     func_id,
                     params: vec![Param {
                         id: param_id,
@@ -9875,6 +9879,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                                         None
                                     };
                                     Expr::Closure {
+                                        enclosing_func_id: ctx.current_enclosing_func_id,
                                         func_id,
                                         params,
                                         return_type,
@@ -9988,6 +9993,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
             captures = ctx.filter_module_level_captures(captures);
             let static_obj = Expr::Object(props);
             let closure = Expr::Closure {
+                enclosing_func_id: ctx.current_enclosing_func_id,
                 func_id: iife_func_id,
                 params: vec![param],
                 return_type: Type::Any,
@@ -10516,6 +10522,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
             let capture_analysis = crate::capture_analysis::analyze_captures(&body, &all_locals);
 
             Ok(Expr::Closure {
+                enclosing_func_id: ctx.current_enclosing_func_id,
                 func_id,
                 params,
                 return_type: Type::Any,
@@ -10665,6 +10672,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
             let capture_analysis = crate::capture_analysis::analyze_captures(&body, &all_locals);
 
             Ok(Expr::Closure {
+                enclosing_func_id: ctx.current_enclosing_func_id,
                 func_id,
                 params,
                 return_type: Type::Any,
@@ -11326,6 +11334,7 @@ fn try_desugar_reactive_text(
         inner_captures = ctx.filter_module_level_captures(inner_captures);
 
         let inner_closure = Expr::Closure {
+            enclosing_func_id: ctx.current_enclosing_func_id,
             func_id: inner_func_id,
             params: vec![v_param],
             return_type: Type::Any,
@@ -11363,6 +11372,7 @@ fn try_desugar_reactive_text(
     outer_captures = ctx.filter_module_level_captures(outer_captures);
 
     let outer_closure = Expr::Closure {
+        enclosing_func_id: ctx.current_enclosing_func_id,
         func_id: outer_func_id,
         params: vec![],
         return_type: Type::Any,
@@ -11580,6 +11590,7 @@ fn try_desugar_reactive_animate(
         inner_captures = ctx.filter_module_level_captures(inner_captures);
 
         let inner_closure = Expr::Closure {
+            enclosing_func_id: ctx.current_enclosing_func_id,
             func_id: inner_func_id,
             params: vec![v_param],
             return_type: Type::Any,
@@ -11617,6 +11628,7 @@ fn try_desugar_reactive_animate(
     outer_captures = ctx.filter_module_level_captures(outer_captures);
 
     let outer_closure = Expr::Closure {
+        enclosing_func_id: ctx.current_enclosing_func_id,
         func_id: outer_func_id,
         params: vec![],
         return_type: Type::Any,

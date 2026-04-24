@@ -107,7 +107,8 @@ fn scan_expr_for_max_local(expr: &Expr, max_id: &mut LocalId) {
             *max_id = (*max_id).max(*id);
             scan_expr_for_max_local(value, max_id);
         }
-        Expr::Closure { params, body, captures, mutable_captures, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, params, body, captures, mutable_captures, .. } => {
             for p in params { *max_id = (*max_id).max(p.id); }
             for c in captures { *max_id = (*max_id).max(*c); }
             for c in mutable_captures { *max_id = (*max_id).max(*c); }
@@ -242,7 +243,8 @@ fn scan_stmt_for_max_func(stmt: &Stmt, max_id: &mut FuncId) {
 fn scan_expr_for_max_func(expr: &Expr, max_id: &mut FuncId) {
     match expr {
         Expr::FuncRef(id) => *max_id = (*max_id).max(*id),
-        Expr::Closure { func_id, body, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, func_id, body, .. } => {
             *max_id = (*max_id).max(*func_id);
             scan_stmts_for_max_func(body, max_id);
         }
@@ -652,6 +654,7 @@ fn transform_generator_function(func: &mut Function, next_local_id: &mut u32, ne
     };
 
     let next_closure = Expr::Closure {
+                    enclosing_func_id: None,
         func_id: next_func_id_val,
         params: vec![perry_hir::Param { id: next_param_id, name: "__val".to_string(), ty: Type::Any, is_rest: false, default: None }],
         return_type: Type::Any,
@@ -675,6 +678,7 @@ fn transform_generator_function(func: &mut Function, next_local_id: &mut u32, ne
         wrap_returns_in_promise(&mut return_body);
     }
     let return_closure = Expr::Closure {
+                    enclosing_func_id: None,
         func_id: return_func_id_val,
         params: vec![perry_hir::Param { id: return_param_id, name: "__ret_val".to_string(), ty: Type::Any, is_rest: false, default: None }],
         return_type: Type::Any,
@@ -723,6 +727,7 @@ fn transform_generator_function(func: &mut Function, next_local_id: &mut u32, ne
         wrap_returns_in_promise(&mut throw_body);
     }
     let throw_closure = Expr::Closure {
+                    enclosing_func_id: None,
         func_id: throw_func_id_val,
         params: vec![perry_hir::Param { id: throw_param_id, name: "__throw_val".to_string(), ty: Type::Any, is_rest: false, default: None }],
         return_type: Type::Any,

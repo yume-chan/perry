@@ -2770,7 +2770,8 @@ impl WasmModuleEmitter {
                 self.collect_strings_in_expr(then_expr);
                 self.collect_strings_in_expr(else_expr);
             }
-            Expr::Closure { body, .. } => {
+            Expr::Closure {
+                    enclosing_func_id: None, body, .. } => {
                 self.collect_strings_in_stmts(body);
             }
             Expr::NativeMethodCall { module, method, args, class_name, object } => {
@@ -5564,7 +5565,8 @@ impl<'a> FuncEmitCtx<'a> {
             }
 
             // --- Closure ---
-            Expr::Closure { func_id, params, body, captures, mutable_captures, .. } => {
+            Expr::Closure {
+                    enclosing_func_id: None, func_id, params, body, captures, mutable_captures, .. } => {
                 // Compile closure body as a function (it was already registered if it's in module.functions)
                 // If not registered, we need to handle it inline
                 if let Some(&func_idx) = self.emitter.func_map.get(func_id) {
@@ -7362,7 +7364,8 @@ fn collect_closures_from_expr(
     out: &mut Vec<(FuncId, Vec<Param>, Vec<Stmt>, Vec<LocalId>, Vec<LocalId>)>,
 ) {
     match expr {
-        Expr::Closure { func_id, params, body, captures, mutable_captures, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, func_id, params, body, captures, mutable_captures, .. } => {
             out.push((*func_id, params.clone(), body.clone(), captures.clone(), mutable_captures.clone()));
             // Also collect nested closures
             collect_closures_from_stmts(body, out);

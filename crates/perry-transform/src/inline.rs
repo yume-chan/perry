@@ -298,7 +298,8 @@ fn body_contains_super_call(stmts: &[Stmt]) -> bool {
 fn body_contains_closure_capturing(stmts: &[Stmt], captured_ids: &std::collections::HashSet<LocalId>) -> bool {
     fn check_expr(expr: &Expr, captured_ids: &std::collections::HashSet<LocalId>) -> bool {
         match expr {
-            Expr::Closure { captures, body, .. } => {
+            Expr::Closure {
+                    enclosing_func_id: None, captures, body, .. } => {
                 // Check if any capture is in the set of IDs we're looking for
                 for capture_id in captures {
                     if captured_ids.contains(capture_id) {
@@ -553,7 +554,8 @@ fn find_max_local_id(stmts: &[Stmt]) -> LocalId {
             // Closure parameters and body contribute to the global LocalId space.
             // Without recursing here, find_max_local_id undercounts and the inliner
             // can allocate colliding IDs for newly inserted Lets.
-            Expr::Closure { params, body, captures, mutable_captures, .. } => {
+            Expr::Closure {
+                    enclosing_func_id: None, params, body, captures, mutable_captures, .. } => {
                 for param in params {
                     *max_id = (*max_id).max(param.id);
                 }
@@ -1608,7 +1610,8 @@ fn substitute_locals(expr: &mut Expr, param_map: &HashMap<LocalId, Expr>, next_l
             }
         }
         // Closure expressions - substitute in body as well
-        Expr::Closure { body, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, body, .. } => {
             substitute_locals_in_stmts(body, param_map, next_local_id);
         }
         // Native method calls

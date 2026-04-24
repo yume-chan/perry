@@ -364,7 +364,8 @@ fn collect_keys_from_expr(
         Expr::LocalSet(_, expr) | Expr::GlobalSet(_, expr) => {
             collect_keys_from_expr(expr, key_to_idx, keys);
         }
-        Expr::Closure { body, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, body, .. } => {
             collect_keys_from_stmts(body, key_to_idx, keys);
         }
         Expr::New { args, .. } | Expr::NewDynamic { args, .. } | Expr::SuperCall(args) |
@@ -587,7 +588,8 @@ fn replace_in_expr(
         Expr::LocalSet(_, expr) | Expr::GlobalSet(_, expr) => {
             replace_in_expr(expr, key_to_idx, plural_info, plural_param_map);
         }
-        Expr::Closure { body, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, body, .. } => {
             replace_in_stmts(body, key_to_idx, plural_info, plural_param_map);
         }
         Expr::New { args, .. } | Expr::NewDynamic { args, .. } | Expr::SuperCall(args) |

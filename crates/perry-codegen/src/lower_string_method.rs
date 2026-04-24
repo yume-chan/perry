@@ -194,7 +194,8 @@ pub(crate) fn lower_string_method(
             // or a LocalGet of a function-typed local.
             let repl_is_function = matches!(
                 &args[1],
-                Expr::Closure { .. } | Expr::FuncRef(_)
+                Expr::Closure {
+                    enclosing_func_id: None, .. } | Expr::FuncRef(_)
             ) || matches!(&args[1], Expr::LocalGet(id) if ctx.local_closure_func_ids.contains_key(id));
             // Detect a string literal that includes $<name> back-refs
             // so we route to the named-group-aware runtime variant.

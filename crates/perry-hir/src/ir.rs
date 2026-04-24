@@ -1562,6 +1562,8 @@ pub enum Expr {
     Closure {
         /// Unique ID for this closure's underlying function
         func_id: FuncId,
+        /// Unique ID of the enclosing function (for looking up scope analysis during codegen)
+        enclosing_func_id: Option<FuncId>,
         /// Parameter definitions
         params: Vec<Param>,
         /// Return type

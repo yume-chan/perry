@@ -3894,7 +3894,8 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
         for stmt in &hir_module.init {
             if let perry_hir::ir::Stmt::Let { name, init: Some(expr), .. } = stmt {
                 if exported_set.contains(name) {
-                    if let perry_hir::ir::Expr::Closure { params, return_type, is_async, .. } = expr {
+                    if let perry_hir::ir::Expr::Closure {
+                    enclosing_func_id: None, params, return_type, is_async, .. } = expr {
                         exported_func_param_counts.insert((path_str.clone(), name.clone()), params.len());
                         exported_func_return_types.insert((path_str.clone(), name.clone()), return_type.clone());
                         if *is_async {

@@ -188,6 +188,9 @@ pub(crate) fn lower_fn_decl(ctx: &mut LoweringContext, fn_decl: &ast::FnDecl) ->
     let name = fn_decl.ident.sym.to_string();
     eprintln!("[FN_DECL] Enter: {}", name);
     let func_id = ctx.lookup_func(&name).unwrap_or_else(|| ctx.fresh_func());
+    
+    // Set current enclosing function for closure lowering
+    let prev_enclosing = ctx.current_enclosing_func_id.replace(func_id);
 
     // Extract type parameters from generic function declaration (e.g., function foo<T, U>(...))
     let type_params = fn_decl.function.type_params
@@ -396,6 +399,9 @@ pub(crate) fn lower_fn_decl(ctx: &mut LoweringContext, fn_decl: &ast::FnDecl) ->
     }
     all_locals.extend(scope_locals);
     let capture_analysis = crate::capture_analysis::analyze_captures(&body, &all_locals);
+
+    // Restore previous enclosing function
+    ctx.current_enclosing_func_id = prev_enclosing;
 
     Ok(Function {
         id: func_id,
@@ -1302,6 +1308,12 @@ pub(crate) fn lower_type_alias_decl(ctx: &mut LoweringContext, alias_decl: &ast:
 }
 
 pub(crate) fn lower_constructor(ctx: &mut LoweringContext, class_name: &str, ctor: &ast::Constructor) -> Result<Function> {
+    // Generate a unique func_id for this constructor
+    let constructor_func_id = ctx.fresh_func();
+    
+    // Set current enclosing function for closure lowering
+    let prev_enclosing = ctx.current_enclosing_func_id.replace(constructor_func_id);
+    
     let scope_mark = ctx.enter_scope();
 
     // Track that we're inside a constructor body so `new.target` can resolve
@@ -1405,8 +1417,11 @@ pub(crate) fn lower_constructor(ctx: &mut LoweringContext, class_name: &str, cto
     ctx.exit_scope(scope_mark);
     ctx.in_constructor_class = saved_ctor_class;
 
+    // Restore previous enclosing function
+    ctx.current_enclosing_func_id = prev_enclosing;
+
     Ok(Function {
-        id: ctx.fresh_func(),
+        id: constructor_func_id,
         name: format!("{}::constructor", class_name),
         type_params: Vec::new(),
         params,
@@ -1422,6 +1437,12 @@ pub(crate) fn lower_constructor(ctx: &mut LoweringContext, class_name: &str, cto
 }
 
 pub(crate) fn lower_class_method(ctx: &mut LoweringContext, method: &ast::ClassMethod) -> Result<Function> {
+    // Generate a unique func_id for this method
+    let method_func_id = ctx.fresh_func();
+    
+    // Set current enclosing function for closure lowering
+    let prev_enclosing = ctx.current_enclosing_func_id.replace(method_func_id);
+    
     let name = match &method.key {
         ast::PropName::Ident(ident) => ident.sym.to_string(),
         ast::PropName::Str(s) => s.value.as_str().unwrap_or("").to_string(),
@@ -1496,8 +1517,11 @@ pub(crate) fn lower_class_method(ctx: &mut LoweringContext, method: &ast::ClassM
     // Exit method's type param scope
     ctx.exit_type_param_scope();
 
+    // Restore previous enclosing function
+    ctx.current_enclosing_func_id = prev_enclosing;
+
     Ok(Function {
-        id: ctx.fresh_func(),
+        id: method_func_id,
         name,
         type_params,
         params,
@@ -1514,6 +1538,12 @@ pub(crate) fn lower_class_method(ctx: &mut LoweringContext, method: &ast::ClassM
 
 /// Lower a getter method (get propertyName(): Type { ... })
 pub(crate) fn lower_getter_method(ctx: &mut LoweringContext, method: &ast::ClassMethod) -> Result<Function> {
+    // Generate a unique func_id for this getter
+    let getter_func_id = ctx.fresh_func();
+    
+    // Set current enclosing function for closure lowering
+    let prev_enclosing = ctx.current_enclosing_func_id.replace(getter_func_id);
+    
     let name = match &method.key {
         ast::PropName::Ident(ident) => format!("get_{}", ident.sym),
         ast::PropName::Str(s) => format!("get_{}", s.value.as_str().unwrap_or("")),
@@ -1551,8 +1581,11 @@ pub(crate) fn lower_getter_method(ctx: &mut LoweringContext, method: &ast::Class
 
     ctx.exit_scope(scope_mark);
 
+    // Restore previous enclosing function
+    ctx.current_enclosing_func_id = prev_enclosing;
+
     Ok(Function {
-        id: ctx.fresh_func(),
+        id: getter_func_id,
         name,
         type_params: Vec::new(),
         params: Vec::new(),
@@ -1569,6 +1602,12 @@ pub(crate) fn lower_getter_method(ctx: &mut LoweringContext, method: &ast::Class
 
 /// Lower a setter method (set propertyName(value: Type) { ... })
 pub(crate) fn lower_setter_method(ctx: &mut LoweringContext, method: &ast::ClassMethod) -> Result<Function> {
+    // Generate a unique func_id for this setter
+    let setter_func_id = ctx.fresh_func();
+    
+    // Set current enclosing function for closure lowering
+    let prev_enclosing = ctx.current_enclosing_func_id.replace(setter_func_id);
+    
     let name = match &method.key {
         ast::PropName::Ident(ident) => format!("set_{}", ident.sym),
         ast::PropName::Str(s) => format!("set_{}", s.value.as_str().unwrap_or("")),
@@ -1604,8 +1643,11 @@ pub(crate) fn lower_setter_method(ctx: &mut LoweringContext, method: &ast::Class
 
     ctx.exit_scope(scope_mark);
 
+    // Restore previous enclosing function
+    ctx.current_enclosing_func_id = prev_enclosing;
+
     Ok(Function {
-        id: ctx.fresh_func(),
+        id: setter_func_id,
         name,
         type_params: Vec::new(),
         params,
@@ -2214,6 +2256,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 let closure_capture_analysis = crate::capture_analysis::analyze_captures(&body, &closure_locals);
 
                 let closure = Expr::Closure {
+                    enclosing_func_id: None,
                     func_id,
                     params,
                     return_type: Type::Any,

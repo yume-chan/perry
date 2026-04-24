@@ -206,7 +206,8 @@ fn collect_nested_closure_boxed_vars_in_expr(
 ) {
     use perry_hir::Expr;
     match expr {
-        Expr::Closure { body, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, body, .. } => {
             // Each closure is its own lexical scope — run the scope
             // analysis on the body, then recurse into any closures
             // that appear inside it.
@@ -314,7 +315,8 @@ fn collect_self_recursive_closure_ids(
             // just check if the id is in the already-computed
             // closure_refs set (which includes all ids referenced
             // from any closure body in these stmts).
-            if matches!(init_expr, perry_hir::Expr::Closure { .. }) {
+            if matches!(init_expr, perry_hir::Expr::Closure {
+                    enclosing_func_id: None, .. }) {
                 if closure_refs.contains(id) {
                     out.insert(*id);
                 }
@@ -494,7 +496,8 @@ fn collect_closure_refs_and_writes_in_expr(
     // as a "closure capture write" and triggering false-positive
     // boxing of a non-captured variable.
     match expr {
-        Expr::Closure { body, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, body, .. } => {
             // Collect every LocalGet/LocalSet/Update ref inside the
             // closure body. Nested closures inside this body will
             // also contribute their refs.
@@ -703,7 +706,8 @@ fn collect_outer_writes_in_expr(
     match expr {
         // STOP recursing into closures — those are "inside"; we only
         // collect outer-scope writes here.
-        Expr::Closure { .. } => {}
+        Expr::Closure {
+                    enclosing_func_id: None, .. } => {}
         Expr::LocalSet(id, v) => {
             out.insert(*id);
             collect_outer_writes_in_expr(v, out);
@@ -874,7 +878,8 @@ fn collect_write_ids_in_expr(
         Expr::Update { id, .. } => {
             out.insert(*id);
         }
-        Expr::Closure { body, .. } => collect_write_ids_in_stmts(body, out),
+        Expr::Closure {
+                    enclosing_func_id: None, body, .. } => collect_write_ids_in_stmts(body, out),
         Expr::Binary { left, right, .. }
         | Expr::Logical { left, right, .. }
         | Expr::Compare { left, right, .. } => {
@@ -999,7 +1004,8 @@ fn collect_closure_let_types_in_expr(
 ) {
     use perry_hir::Expr;
     match expr {
-        Expr::Closure { params, body, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, params, body, .. } => {
             for p in params {
                 out.insert(p.id, p.ty.clone());
             }

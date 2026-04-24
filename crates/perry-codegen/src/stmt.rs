@@ -159,7 +159,8 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
 
             // Track closure func_id → local_id mapping so the closure
             // call site in lower_call can look up rest param info.
-            if let Some(perry_hir::Expr::Closure { func_id: cfid, .. }) = init.as_ref() {
+            if let Some(perry_hir::Expr::Closure {
+                    enclosing_func_id: None, func_id: cfid, .. }) = init.as_ref() {
                 ctx.local_closure_func_ids.insert(*id, *cfid);
             }
 
@@ -1201,7 +1202,8 @@ fn expr_preserves_array_length(
             }
             true
         }
-        Expr::Closure { .. } => false,
+        Expr::Closure {
+                    enclosing_func_id: None, .. } => false,
         Expr::Binary { left, right, .. }
         | Expr::Compare { left, right, .. }
         | Expr::Logical { left, right, .. } => walk(left) && walk(right),

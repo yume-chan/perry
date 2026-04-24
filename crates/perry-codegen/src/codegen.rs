@@ -774,7 +774,8 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     // (so the closure body can see the live storage instead of a stale snapshot).
     {
         for (_, closure_expr) in &all_closures {
-            if let perry_hir::Expr::Closure { params, body, .. } = closure_expr {
+            if let perry_hir::Expr::Closure {
+                    enclosing_func_id: None, params, body, .. } = closure_expr {
                 scan_body(params, body, &mut referenced_from_fn);
             }
         }
@@ -803,7 +804,8 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         }
         collect_closures_in_stmts(&hir.init, &mut seen, &mut closures);
         for (_, closure_expr) in &closures {
-            if let perry_hir::Expr::Closure { params, body, .. } = closure_expr {
+            if let perry_hir::Expr::Closure {
+                    enclosing_func_id: None, params, body, .. } = closure_expr {
                 scan_body(params, body, &mut referenced_from_fn);
             }
         }
@@ -1209,7 +1211,8 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     let closure_rest_params: HashMap<u32, usize> = closures
         .iter()
         .filter_map(|(fid, expr)| {
-            if let perry_hir::Expr::Closure { params, .. } = expr {
+            if let perry_hir::Expr::Closure {
+                    enclosing_func_id: None, params, .. } = expr {
                 params.iter().position(|p| p.is_rest).map(|idx| (*fid, idx))
             } else {
                 None

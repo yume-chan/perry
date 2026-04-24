@@ -206,7 +206,8 @@ fn expr_has_mutation(e: &perry_hir::Expr, id: u32) -> bool {
             ArrayElement::Expr(e) | ArrayElement::Spread(e) => expr_has_mutation(e, id),
         }),
         Expr::Object(props) => props.iter().any(|(_, v)| expr_has_mutation(v, id)),
-        Expr::Closure { body, .. } => has_any_mutation(body, id),
+        Expr::Closure {
+                    enclosing_func_id: None, body, .. } => has_any_mutation(body, id),
         Expr::Sequence(es) => es.iter().any(|e| expr_has_mutation(e, id)),
         Expr::ArrayPush { array_id, value } => {
             *array_id == id || expr_has_mutation(value, id)
@@ -1133,7 +1134,8 @@ fn collect_ref_ids_in_expr(e: &perry_hir::Expr, out: &mut HashSet<u32>) {
             walk(a, out);
             walk(b, out);
         }
-        Expr::Closure { body, captures, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, body, captures, .. } => {
             // Closure literals don't introduce captures into the outer
             // scope, but their explicit captures + body references may
             // mention outer locals that need to be globalized.
@@ -1967,7 +1969,8 @@ fn collect_localset_ids_in_expr_filtered(
             walk(a, out);
             walk(b, out);
         }
-        Expr::Closure { body, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, body, .. } => {
             collect_localset_ids_in_stmts(body, out);
         }
         Expr::ParseInt { string, radix } => {
@@ -2636,7 +2639,8 @@ fn check_escapes_in_expr(
 
         // Closure bodies: LocalGet(id) inside a closure is always an escape
         // because the closure can outlive the stack frame
-        Expr::Closure { body, captures, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, body, captures, .. } => {
             // Any captured candidate is an escape
             for c in captures {
                 if candidates.contains_key(c) {
@@ -3410,7 +3414,8 @@ fn check_array_escapes_in_expr(
         }
 
         // Closure captures: if a candidate is captured, it escapes.
-        Expr::Closure { body, captures, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, body, captures, .. } => {
             for c in captures {
                 if candidates.contains_key(c) {
                     escaped.insert(*c);
@@ -3579,7 +3584,8 @@ fn find_object_literal_candidates(
                 // Reject method closures that need a `this` back-pointer —
                 // scalar replacement can't provide one.
                 let has_this_closure = props.iter().any(|(_, v)| {
-                    matches!(v, Expr::Closure { captures_this: true, .. })
+                    matches!(v, Expr::Closure {
+                    enclosing_func_id: None, captures_this: true, .. })
                 });
                 if has_this_closure {
                     continue;
@@ -3789,7 +3795,8 @@ fn check_object_literal_escapes_in_expr(
             }
         }
 
-        Expr::Closure { body, captures, .. } => {
+        Expr::Closure {
+                    enclosing_func_id: None, body, captures, .. } => {
             for c in captures {
                 if candidates.contains_key(c) {
                     escaped.insert(*c);
