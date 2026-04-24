@@ -10,7 +10,7 @@
 
 
 use anyhow::{anyhow, bail, Result};
-use perry_hir::{BinaryOp, CompareOp, Expr, UnaryOp, UpdateOp};
+use perry_hir::{BinaryOp, CompareOp, Expr, UnaryOp, UpdateOp, CaptureAnalysis, ScopeId};
 use perry_types::Type as HirType;
 
 use crate::block::LlBlock;
@@ -539,6 +539,17 @@ pub(crate) struct FnCtx<'a> {
     /// after the function finishes lowering the caller bumps the module
     /// counter by the number of slots it used (closes #71).
     pub buffer_alias_base: u32,
+
+    /// Scope object ptrs: `ScopeId → alloca slot name (string)`. When a
+    /// function has captured variables organized in scopes (new Phase 3
+    /// system), this map tracks where each scope's pointer is stored.
+    /// Allocated at function entry via `js_scope_object_alloc(var_count)`.
+    pub scope_ptrs: std::collections::HashMap<ScopeId, String>,
+
+    /// The scope capture analysis for the current function/closure.
+    /// `None` if using the old box-based system. When `Some`, closures
+    /// are created with scope pointers instead of individual captures.
+    pub scope_capture_analysis: Option<Box<CaptureAnalysis>>,
 }
 
 /// (Issue #50) Info about a flat-folded const 2D int array.

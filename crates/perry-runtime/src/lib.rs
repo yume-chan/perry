@@ -39,6 +39,7 @@ pub mod timer;
 pub mod event_pump;
 pub mod builtins;
 pub mod r#box;
+pub mod scope_object;
 pub mod process;
 pub mod fs;
 pub mod path;

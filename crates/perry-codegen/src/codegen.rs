@@ -37,6 +37,7 @@ use perry_hir::{Function, Module as HirModule};
 use crate::expr::FnCtx;
 use crate::module::LlModule;
 use crate::runtime_decls;
+use crate::scope_objects;
 use crate::stmt;
 use crate::strings::StringPool;
 use crate::types::{DOUBLE, I32, I64, LlvmType, PTR, VOID};
@@ -1669,7 +1670,13 @@ fn compile_function(
         ic_globals: Vec::new(),
         buffer_data_slots: HashMap::new(),
         buffer_alias_base,
+        scope_ptrs: HashMap::new(),
+        scope_capture_analysis: f.scope_capture_analysis.clone(),
     };
+    
+    // Phase 3: Initialize scope objects for closures if present
+    scope_objects::initialize_scope_objects(&mut ctx)?;
+    
     stmt::lower_stmts(&mut ctx, &f.body)
         .with_context(|| format!("lowering body of '{}'", f.name))?;
 
@@ -1744,15 +1751,16 @@ fn compile_closure(
 ) -> Result<()> {
     // Destructure the closure expression. We trust that the caller
     // passes only `Expr::Closure` here (from `collect_closures_*`).
-    let (params, body, captures, captures_this, enclosing_class) = match closure_expr {
+    let (params, body, captures, captures_this, enclosing_class, scope_capture_analysis) = match closure_expr {
         perry_hir::Expr::Closure {
             params,
             body,
             captures,
             captures_this,
             enclosing_class,
+            scope_capture_analysis,
             ..
-        } => (params, body, captures, *captures_this, enclosing_class.clone()),
+        } => (params, body, captures, *captures_this, enclosing_class.clone(), scope_capture_analysis.clone()),
         _ => return Err(anyhow!("compile_closure: expected Expr::Closure")),
     };
 
@@ -1949,7 +1957,12 @@ fn compile_closure(
         ic_globals: Vec::new(),
         buffer_data_slots: HashMap::new(),
         buffer_alias_base,
+        scope_ptrs: HashMap::new(),
+        scope_capture_analysis,
     };
+
+    // Phase 3: Initialize scope objects for nested closures if present
+    scope_objects::initialize_scope_objects(&mut ctx)?;
 
     stmt::lower_stmts(&mut ctx, body)
         .with_context(|| format!("lowering closure body func_id={}", func_id))?;
@@ -2127,7 +2140,12 @@ fn compile_method(
         ic_globals: Vec::new(),
         buffer_data_slots: HashMap::new(),
         buffer_alias_base,
+        scope_ptrs: HashMap::new(),
+        scope_capture_analysis: method.scope_capture_analysis.clone(),
     };
+
+    // Phase 3: Initialize scope objects if present
+    scope_objects::initialize_scope_objects(&mut ctx)?;
 
     // Constructors emitted as standalone cross-module LLVM functions (named
     // `<prefix>__<class>_constructor`) must bake the field initializers into
@@ -2340,6 +2358,8 @@ fn compile_module_entry(
         ic_globals: Vec::new(),
         buffer_data_slots: HashMap::new(),
         buffer_alias_base,
+        scope_ptrs: HashMap::new(),
+        scope_capture_analysis: None,
         };
         // Register every module-level global's ADDRESS as a GC root so
         // the mark phase can discover pointer-typed values (Maps, Arrays,
@@ -2557,6 +2577,8 @@ fn compile_module_entry(
         ic_globals: Vec::new(),
         buffer_data_slots: HashMap::new(),
         buffer_alias_base,
+        scope_ptrs: HashMap::new(),
+        scope_capture_analysis: None,
         };
         // Register every module-level global's ADDRESS as a GC root —
         // same reason as the entry-module branch above (issue #36). For
@@ -2953,7 +2975,13 @@ fn compile_static_method(
         ic_globals: Vec::new(),
         buffer_data_slots: HashMap::new(),
         buffer_alias_base,
+        scope_ptrs: HashMap::new(),
+        scope_capture_analysis: f.scope_capture_analysis.clone(),
     };
+    
+    // Phase 3: Initialize scope objects if present
+    scope_objects::initialize_scope_objects(&mut ctx)?;
+    
     stmt::lower_stmts(&mut ctx, &f.body)
         .with_context(|| format!("lowering body of static '{}::{}'", class_name, f.name))?;
 

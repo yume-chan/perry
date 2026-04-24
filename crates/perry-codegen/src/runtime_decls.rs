@@ -901,6 +901,17 @@ pub fn declare_phase_b_objects(module: &mut LlModule) {
     // Unchecked array set (plain array, no buffer/Set/Map dispatch).
     module.declare_function("js_array_set_f64_unchecked", VOID, &[I64, I32, DOUBLE]);
 
+    // --- Scope Objects (new architecture for closure captures) ---
+    // Allocate a scope object that holds captured variables for a lexical scope.
+    // Args: (field_count) -> i64 pointer to scope object
+    module.declare_function("js_scope_object_alloc", I64, &[I32]);
+    // Get a variable from a scope object.
+    // Args: (scope_ptr, var_index) -> double (NaN-boxed value)
+    module.declare_function("js_scope_object_get_f64", DOUBLE, &[I64, I32]);
+    // Set a variable in a scope object.
+    // Args: (scope_ptr, var_index, value) -> void
+    module.declare_function("js_scope_object_set_f64", VOID, &[I64, I32, DOUBLE]);
+
     // --- Proxy / Reflect ---
     module.declare_function("js_proxy_new", DOUBLE, &[DOUBLE, DOUBLE]);
     module.declare_function("js_proxy_revoke", VOID, &[DOUBLE]);

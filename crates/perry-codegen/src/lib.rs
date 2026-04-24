@@ -23,6 +23,7 @@ pub(crate) mod stmt;
 pub(crate) mod loop_purity;
 pub(crate) mod collectors;
 pub(crate) mod boxed_vars;
+pub(crate) mod scope_objects;
 pub mod codegen;
 
 pub use codegen::{compile_module, resolve_target_triple, CompileOptions, ImportedClass};
