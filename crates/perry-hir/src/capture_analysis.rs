@@ -17,16 +17,52 @@ pub fn analyze_captures(func_body: &[Stmt], func_locals: &[LocalId]) -> CaptureA
     let root_scope = analyzer.create_scope(None);
     analyzer.enter_scope(root_scope);
     
+    // Pre-pass 1: Add all function parameters
     for &local_id in func_locals {
         analyzer.scopes.get_mut(&root_scope).unwrap().add_variable(local_id);
     }
     
+    // Pre-pass 2: Discover ALL variables (Let statements) in the root scope
+    // This ensures that when we encounter closures that reference variables,
+    // those variables are already registered in the scope, even if they're
+    // declared after the closure in the source.
+    let mut root_defined = std::collections::HashSet::new();
+    for stmt in func_body {
+        collect_defined_in_scope_stmt(stmt, &mut root_defined);
+    }
+    for &local_id in &root_defined {
+        if !func_locals.contains(&local_id) {
+            analyzer.scopes.get_mut(&root_scope).unwrap().add_variable(local_id);
+        }
+    }
+    
+    // Main pass: Walk statements to collect captures
     for stmt in func_body {
         analyzer.walk_stmt(stmt);
     }
     
     analyzer.exit_scope();
     analyzer.finish()
+}
+
+/// Helper: collect all locally-defined variables in a statement (at current scope level only, not nested scopes)
+fn collect_defined_in_scope_stmt(stmt: &Stmt, defined: &mut std::collections::HashSet<LocalId>) {
+    match stmt {
+        Stmt::Let { id, .. } => {
+            defined.insert(*id);
+        }
+        Stmt::If { then_branch, else_branch, .. } => {
+            // Don't recurse into if branches - they have their own scopes
+            // Only collect vars at the current scope level
+        }
+        Stmt::While { body, .. } | Stmt::DoWhile { body, .. } | Stmt::For { body, .. } => {
+            // Don't recurse into loop bodies - they have their own scopes
+        }
+        Stmt::Try { body, catch, finally } => {
+            // Don't recurse into try/catch/finally - they have their own scopes
+        }
+        _ => {}
+    }
 }
 
 struct CaptureAnalyzer {

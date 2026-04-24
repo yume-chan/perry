@@ -15,6 +15,109 @@ use crate::lower_patterns::*;
 use crate::destructuring::*;
 use crate::analysis::*;
 
+/// Pre-pass: discover all locally-defined variables (Let statements) in a function body
+/// recursively through all nested structures (if/while/for/try blocks).
+/// Variables are registered in the current scope BEFORE we start lowering, so that:
+/// 1. Update expressions (++) on variables declared later in the function work
+/// 2. Closures can reference variables declared anywhere in the function body
+/// 3. JavaScript hoisting-like behavior for let declarations
+fn discover_locals_in_scope(ctx: &mut LoweringContext, stmts: &[ast::Stmt]) {
+    for stmt in stmts {
+        discover_locals_in_stmt(ctx, stmt);
+    }
+}
+
+fn discover_locals_in_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) {
+    match stmt {
+        // Direct let/var declaration
+        ast::Stmt::Decl(ast::Decl::Var(var_decl)) => {
+            for decl in &var_decl.decls {
+                if let Ok(name) = get_pat_name(&decl.name) {
+                    let ty = Type::Any;
+                    ctx.define_local(name, ty);
+                }
+            }
+        }
+        // Nested blocks
+        ast::Stmt::Block(block) => {
+            discover_locals_in_scope(ctx, &block.stmts);
+        }
+        // If statement
+        ast::Stmt::If(if_stmt) => {
+            discover_locals_in_stmt(ctx, &if_stmt.cons);
+            if let Some(alt) = &if_stmt.alt {
+                discover_locals_in_stmt(ctx, alt);
+            }
+        }
+        // While statement
+        ast::Stmt::While(w) => {
+            discover_locals_in_stmt(ctx, &w.body);
+        }
+        // DoWhile statement
+        ast::Stmt::DoWhile(w) => {
+            discover_locals_in_stmt(ctx, &w.body);
+        }
+        // For statement
+        ast::Stmt::For(f) => {
+            // Also check init for var declarations
+            if let Some(ast::VarDeclOrExpr::VarDecl(vd)) = &f.init {
+                for decl in &vd.decls {
+                    if let Ok(name) = get_pat_name(&decl.name) {
+                        ctx.define_local(name, Type::Any);
+                    }
+                }
+            }
+            discover_locals_in_stmt(ctx, &f.body);
+        }
+        // ForIn statement
+        ast::Stmt::ForIn(f) => {
+            // Check left side for var declarations
+            if let ast::ForHead::VarDecl(vd) = &f.left {
+                for decl in &vd.decls {
+                    if let Ok(name) = get_pat_name(&decl.name) {
+                        ctx.define_local(name, Type::Any);
+                    }
+                }
+            }
+            discover_locals_in_stmt(ctx, &f.body);
+        }
+        // ForOf statement
+        ast::Stmt::ForOf(f) => {
+            // Check left side for var declarations
+            if let ast::ForHead::VarDecl(vd) = &f.left {
+                for decl in &vd.decls {
+                    if let Ok(name) = get_pat_name(&decl.name) {
+                        ctx.define_local(name, Type::Any);
+                    }
+                }
+            }
+            discover_locals_in_stmt(ctx, &f.body);
+        }
+        // Try statement
+        ast::Stmt::Try(t) => {
+            discover_locals_in_scope(ctx, &t.block.stmts);
+            if let Some(catch) = &t.handler {
+                discover_locals_in_scope(ctx, &catch.body.stmts);
+            }
+            if let Some(finally) = &t.finalizer {
+                discover_locals_in_scope(ctx, &finally.stmts);
+            }
+        }
+        // Labeled statement
+        ast::Stmt::Labeled(labeled) => {
+            discover_locals_in_stmt(ctx, &labeled.body);
+        }
+        // Switch statement
+        ast::Stmt::Switch(s) => {
+            for case in &s.cases {
+                discover_locals_in_scope(ctx, &case.cons);
+            }
+        }
+        // Other statements: expr, return, throw, break, continue, etc.
+        _ => {}
+    }
+}
+
 /// Build `if (param === undefined) { param = default; }` stmts for every
 /// param with a default value. Prepended to function/constructor bodies so
 /// cross-module callers that pad missing args with `undefined` still observe
@@ -324,6 +427,13 @@ pub(crate) fn lower_fn_decl(ctx: &mut LoweringContext, fn_decl: &ast::FnDecl) ->
     for (param_id, pat) in &destructuring_params {
         let stmts = generate_param_destructuring_stmts(ctx, pat, *param_id)?;
         destructuring_stmts.extend(stmts);
+    }
+
+    // Pre-pass: discover all variables declared in the function body (Let statements)
+    // This is necessary to handle forward references by nested functions and closures
+    // Example: a closure at statement[5] might reference a variable declared at statement[10]
+    if let Some(ref block) = fn_decl.function.body {
+        discover_locals_in_scope(ctx, &block.stmts);
     }
 
     // Lower body
@@ -1824,20 +1934,29 @@ pub(crate) fn lower_private_prop(ctx: &mut LoweringContext, prop: &ast::PrivateP
 /// 3. When the Fn statement is lowered, the local is properly defined with its initializer
 fn pre_register_all_declarations(ctx: &mut LoweringContext, block: &ast::BlockStmt) -> Result<()> {
     for stmt in &block.stmts {
-        // Only pre-register nested function declarations
-        if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
-            if !fn_decl.function.is_generator && fn_decl.function.body.is_some() {
-                let func_name = fn_decl.ident.sym.to_string();
-                
-                // Pre-register the function ID so forward references resolve
-                if ctx.lookup_func(&func_name).is_none() {
-                    let func_id = ctx.fresh_func();
-                    ctx.register_func(func_name, func_id);
+        match stmt {
+            // Pre-register nested function declarations
+            ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) => {
+                if !fn_decl.function.is_generator && fn_decl.function.body.is_some() {
+                    let func_name = fn_decl.ident.sym.to_string();
+                    
+                    // Pre-register the function ID so forward references resolve
+                    if ctx.lookup_func(&func_name).is_none() {
+                        let func_id = ctx.fresh_func();
+                        ctx.register_func(func_name, func_id);
+                    }
                 }
-                
-                // DO NOT pre-define the local variable. It will be defined when
-                // the Fn statement is lowered (at line 2058), with proper initialization.
             }
+            // Pre-register variable declarations so they can be referenced throughout the scope
+            ast::Stmt::Decl(ast::Decl::Var(var_decl)) => {
+                for decl in &var_decl.decls {
+                    if let Ok(name) = get_pat_name(&decl.name) {
+                        let ty = Type::Any;
+                        ctx.define_local(name, ty);
+                    }
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
