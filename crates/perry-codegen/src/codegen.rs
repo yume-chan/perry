@@ -754,6 +754,15 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             for m in &c.methods {
                 collect_closures_in_stmts(&m.body, &mut all_closures_seen, &mut all_closures);
             }
+            for (_, getter_fn) in &c.getters {
+                collect_closures_in_stmts(&getter_fn.body, &mut all_closures_seen, &mut all_closures);
+            }
+            for (_, setter_fn) in &c.setters {
+                collect_closures_in_stmts(&setter_fn.body, &mut all_closures_seen, &mut all_closures);
+            }
+            for sm in &c.static_methods {
+                collect_closures_in_stmts(&sm.body, &mut all_closures_seen, &mut all_closures);
+            }
             if let Some(ctor) = &c.constructor {
                 collect_closures_in_stmts(&ctor.body, &mut all_closures_seen, &mut all_closures);
             }
