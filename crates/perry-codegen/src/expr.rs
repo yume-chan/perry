@@ -550,6 +550,12 @@ pub(crate) struct FnCtx<'a> {
     /// `None` if using the old box-based system. When `Some`, closures
     /// are created with scope pointers instead of individual captures.
     pub scope_capture_analysis: Option<Box<CaptureAnalysis>>,
+    
+    /// When lowering a closure body with scope objects, this maps each
+    /// scope to its index in the closure's capture array. Used during
+    /// LocalGet/LocalSet to route through scope objects.
+    /// Maps ScopeId → capture index (where the scope pointer is stored).
+    pub closure_scope_indices: std::collections::HashMap<ScopeId, usize>,
 
     /// Cache for auto-computed closure captures. Maps `func_id → captures`.
     /// Used to ensure that `compute_auto_captures()` returns the same result
@@ -699,6 +705,42 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     &[(I64, &closure_ptr), (I32, &capture_idx.to_string())],
                 ));
             }
+            // Scope object local (captured variable): Read from scope object
+            if let Some(analysis) = &ctx.scope_capture_analysis {
+                if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
+                    // Inside a closure body: get the scope pointer from the closure's captures
+                    if let Some(closure_capture_idx_val) = ctx.closure_scope_indices.get(&scope_id).copied() {
+                        if let Some(closure_ptr) = &ctx.current_closure_ptr.clone() {
+                            let blk = ctx.block();
+                            let scope_ptr = blk.call(
+                                crate::types::I64,
+                                "js_closure_get_capture_ptr",
+                                &[(crate::types::I64, closure_ptr), (I32, &closure_capture_idx_val.to_string())],
+                            );
+                            let var_index_str = var_index.to_string();
+                            return Ok(blk.call(
+                                DOUBLE,
+                                "js_scope_object_get_f64",
+                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str)],
+                            ));
+                        }
+                    } else {
+                        // Not in a closure body: get from the scope pointer directly
+                        if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
+                            let blk = ctx.block();
+                            // Load the scope pointer from its stack slot
+                            let scope_ptr = blk.load(crate::types::I64, &scope_ptr_slot);
+                            // Read the variable from the scope object
+                            let var_index_str = var_index.to_string();
+                            return Ok(blk.call(
+                                DOUBLE,
+                                "js_scope_object_get_f64",
+                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str)],
+                            ));
+                        }
+                    }
+                }
+            }
             // Boxed local in enclosing function: load the slot (box
             // pointer), deref via js_box_get.
             if ctx.boxed_vars.contains(id) {
@@ -816,7 +858,44 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         &[(I64, &closure_ptr), (I32, &idx_str), (DOUBLE, &v)],
                     );
                 }
-            } else if ctx.boxed_vars.contains(id) && !ctx.module_globals.contains_key(id) {
+            } else if let Some(analysis) = &ctx.scope_capture_analysis {
+                // Scope object local (captured variable but not via old closure captures)
+                if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
+                    // Inside a closure body: get the scope pointer from the closure's captures
+                    if let Some(closure_capture_idx_val) = ctx.closure_scope_indices.get(&scope_id).copied() {
+                        if let Some(closure_ptr) = &ctx.current_closure_ptr.clone() {
+                            let blk = ctx.block();
+                            let scope_ptr = blk.call(
+                                crate::types::I64,
+                                "js_closure_get_capture_ptr",
+                                &[(crate::types::I64, closure_ptr), (I32, &closure_capture_idx_val.to_string())],
+                            );
+                            let var_index_str = var_index.to_string();
+                            blk.call_void(
+                                "js_scope_object_set_f64",
+                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str), (DOUBLE, &v)],
+                            );
+                            return Ok(v);
+                        }
+                    } else {
+                        // Not in a closure body: write to the scope pointer directly
+                        if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
+                            let blk = ctx.block();
+                            // Load the scope pointer from its stack slot
+                            let scope_ptr = blk.load(crate::types::I64, &scope_ptr_slot);
+                            // Write the variable to the scope object
+                            let var_index_str = var_index.to_string();
+                            blk.call_void(
+                                "js_scope_object_set_f64",
+                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str), (DOUBLE, &v)],
+                            );
+                            return Ok(v);
+                        }
+                    }
+                }
+                // Fall through to normal handling if scope object not available
+            }
+            if ctx.boxed_vars.contains(id) && !ctx.module_globals.contains_key(id) {
                 // Box path — only for non-global locals. Module globals
                 // have their own shared storage and don't need boxing.
                 // Without the !module_globals guard, closures that
@@ -892,6 +971,65 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     &[(I64, &closure_ptr), (I32, &idx_str), (DOUBLE, &new)],
                 );
                 return Ok(if *prefix { new } else { old });
+            }
+            // Scope object local (increment/decrement)
+            if let Some(analysis) = &ctx.scope_capture_analysis {
+                if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
+                    // Inside a closure body: get the scope pointer from the closure's captures
+                    if let Some(closure_capture_idx_val) = ctx.closure_scope_indices.get(&scope_id).copied() {
+                        if let Some(closure_ptr) = &ctx.current_closure_ptr.clone() {
+                            let blk = ctx.block();
+                            let scope_ptr = blk.call(
+                                crate::types::I64,
+                                "js_closure_get_capture_ptr",
+                                &[(crate::types::I64, closure_ptr), (I32, &closure_capture_idx_val.to_string())],
+                            );
+                            let var_index_str = var_index.to_string();
+                            // Read the variable from the scope object
+                            let old = blk.call(
+                                DOUBLE,
+                                "js_scope_object_get_f64",
+                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str)],
+                            );
+                            // Compute the new value
+                            let new = match op {
+                                UpdateOp::Increment => blk.fadd(&old, "1.0"),
+                                UpdateOp::Decrement => blk.fsub(&old, "1.0"),
+                            };
+                            // Write back to scope object
+                            blk.call_void(
+                                "js_scope_object_set_f64",
+                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str), (DOUBLE, &new)],
+                            );
+                            return Ok(if *prefix { new } else { old });
+                        }
+                    } else {
+                        // Not in a closure body: read from the scope pointer directly
+                        if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
+                            let blk = ctx.block();
+                            // Load the scope pointer from its stack slot
+                            let scope_ptr = blk.load(crate::types::I64, &scope_ptr_slot);
+                            // Read the variable from the scope object
+                            let var_index_str = var_index.to_string();
+                            let old = blk.call(
+                                DOUBLE,
+                                "js_scope_object_get_f64",
+                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str)],
+                            );
+                            // Compute the new value
+                            let new = match op {
+                                UpdateOp::Increment => blk.fadd(&old, "1.0"),
+                                UpdateOp::Decrement => blk.fsub(&old, "1.0"),
+                            };
+                            // Write back to scope object
+                            blk.call_void(
+                                "js_scope_object_set_f64",
+                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str), (DOUBLE, &new)],
+                            );
+                            return Ok(if *prefix { new } else { old });
+                        }
+                    }
+                }
             }
             // Boxed enclosing-scope var: load slot (box ptr), deref,
             // increment, box_set. Skip for module globals (they
@@ -2900,58 +3038,96 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // an outer-scope access, NOT a closure capture access — at
             // closure creation we're still outside the closure body).
             //
-            // Boxed captures are special: the CAPTURE VALUE is the
-            // box pointer itself (not the value inside the box). We
-            // store the box pointer (as a bit-castable double) in
-            // the closure's capture slot, so reads/writes inside the
-            // closure body can deref it via js_box_get/set. Without
-            // this, each closure would get a snapshot of the box's
-            // current value.
-            let mut captured_values: Vec<String> = Vec::with_capacity(auto_captures.len());
+            // NEW SCOPE OBJECT APPROACH:
+            // If scope_capture_analysis is available, we collect the scopes
+            // that have captured variables and store their pointers instead
+            // of individual values. This ensures a single source of truth
+            // for captured variables shared with other closures in the same scope.
+            //
+            // FALLBACK (old approach):
+            // Boxed captures store the box pointer itself (not the value inside).
+            // We store the box pointer (as a bit-castable double) in the closure's
+            // capture slot, so reads/writes inside the closure can deref it.
             
-            for cap_id in &auto_captures {
-                if ctx.boxed_vars.contains(cap_id) {
-                    // If the enclosing function has this id boxed,
-                    // we want to forward the BOX POINTER through
-                    // the capture slot, not the value inside the
-                    // box. Read the slot (which holds the box
-                    // pointer bit-cast to double) directly without
-                    // going through the normal LocalGet path (which
-                    // would deref via js_box_get).
-                    if let Some(&_capture_idx) = ctx.closure_captures.get(cap_id) {
-                        // We're inside a closure and this id is a
-                        // transitively-captured box. Read the
-                        // capture slot RAW (it holds the box ptr
-                        // as a double) and propagate directly.
-                        let closure_ptr = ctx
-                            .current_closure_ptr
-                            .clone()
-                            .ok_or_else(|| anyhow!("nested boxed capture but no current_closure_ptr"))?;
-                        let idx_str = _capture_idx.to_string();
-                        let v = ctx.block().call(
-                            DOUBLE,
-                            "js_closure_get_capture_f64",
-                            &[(I64, &closure_ptr), (I32, &idx_str)],
-                        );
-                        captured_values.push(v);
-                    } else if let Some(slot) = ctx.locals.get(cap_id).cloned() {
-                        // Enclosing function owns the box: slot
-                        // holds the box pointer as a double.
-                        let v = ctx.block().load(DOUBLE, &slot);
-                        captured_values.push(v);
-                    } else if let Some(global_name) =
-                        ctx.module_globals.get(cap_id).cloned()
-                    {
-                        // Global boxed var (rare).
-                        let g_ref = format!("@{}", global_name);
-                        let v = ctx.block().load(DOUBLE, &g_ref);
-                        captured_values.push(v);
-                    } else {
-                        captured_values.push(double_literal(0.0));
+            let mut captured_values: Vec<String> = Vec::new();
+            let mut use_scope_objects = false;
+            
+            // Check if we should use scope objects
+            // First, collect scope info while we have an immutable borrow of ctx
+            let scopes_to_load: Vec<(perry_hir::ScopeId, String)> = if let Some(analysis) = &ctx.scope_capture_analysis {
+                let mut scopes_found: std::collections::BTreeMap<perry_hir::ScopeId, String> = 
+                    std::collections::BTreeMap::new();
+                
+                for cap_id in &auto_captures {
+                    if let Some((scope_id, _)) = crate::scope_objects::get_scope_and_index(*cap_id, analysis) {
+                        if !scopes_found.contains_key(&scope_id) {
+                            if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
+                                scopes_found.insert(scope_id, scope_ptr_slot);
+                            }
+                        }
                     }
-                } else {
-                    let v = lower_expr(ctx, &Expr::LocalGet(*cap_id))?;
-                    captured_values.push(v);
+                }
+                
+                scopes_found.into_iter().collect()
+            } else {
+                Vec::new()
+            };
+            
+            // Now load the scope pointers (can mutable borrow ctx now that analysis borrow is released)
+            if !scopes_to_load.is_empty() {
+                use_scope_objects = true;
+                for (_, scope_ptr_slot) in scopes_to_load.iter() {
+                    let scope_ptr = ctx.block().load(crate::types::I64, scope_ptr_slot);
+                    captured_values.push(scope_ptr);
+                }
+            }
+            
+            // Fallback: old js_box approach
+            if !use_scope_objects {
+                for cap_id in &auto_captures {
+                    if ctx.boxed_vars.contains(cap_id) {
+                        // If the enclosing function has this id boxed,
+                        // we want to forward the BOX POINTER through
+                        // the capture slot, not the value inside the
+                        // box. Read the slot (which holds the box
+                        // pointer bit-cast to double) directly without
+                        // going through the normal LocalGet path (which
+                        // would deref via js_box_get).
+                        if let Some(&_capture_idx) = ctx.closure_captures.get(cap_id) {
+                            // We're inside a closure and this id is a
+                            // transitively-captured box. Read the
+                            // capture slot RAW (it holds the box ptr
+                            // as a double) and propagate directly.
+                            let closure_ptr = ctx
+                                .current_closure_ptr
+                                .clone()
+                                .ok_or_else(|| anyhow!("nested boxed capture but no current_closure_ptr"))?;
+                            let idx_str = _capture_idx.to_string();
+                            let v = ctx.block().call(
+                                DOUBLE,
+                                "js_closure_get_capture_f64",
+                                &[(I64, &closure_ptr), (I32, &idx_str)],
+                            );
+                            captured_values.push(v);
+                        } else if let Some(slot) = ctx.locals.get(cap_id).cloned() {
+                            // Enclosing function owns the box: slot
+                            // holds the box pointer as a double.
+                            let v = ctx.block().load(DOUBLE, &slot);
+                            captured_values.push(v);
+                        } else if let Some(global_name) =
+                            ctx.module_globals.get(cap_id).cloned()
+                        {
+                            // Global boxed var (rare).
+                            let g_ref = format!("@{}", global_name);
+                            let v = ctx.block().load(DOUBLE, &g_ref);
+                            captured_values.push(v);
+                        } else {
+                            captured_values.push(double_literal(0.0));
+                        }
+                    } else {
+                        let v = lower_expr(ctx, &Expr::LocalGet(*cap_id))?;
+                        captured_values.push(v);
+                    }
                 }
             }
 
@@ -2983,12 +3159,24 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 "js_closure_alloc",
                 &[(PTR, &func_ref), (I32, &cap_count)],
             );
+            
+            // Store captured values: use appropriate function based on whether
+            // we're using scope objects (i64 pointers) or old js_box approach (f64 values)
             for (idx, val) in captured_values.iter().enumerate() {
                 let idx_str = idx.to_string();
-                blk.call_void(
-                    "js_closure_set_capture_f64",
-                    &[(I64, &closure_handle), (I32, &idx_str), (DOUBLE, val)],
-                );
+                if use_scope_objects {
+                    // Scope pointers are i64 values - use set_capture_ptr
+                    blk.call_void(
+                        "js_closure_set_capture_ptr",
+                        &[(I64, &closure_handle), (I32, &idx_str), (I64, val)],
+                    );
+                } else {
+                    // Individual captured values are f64 - use set_capture_f64
+                    blk.call_void(
+                        "js_closure_set_capture_f64",
+                        &[(I64, &closure_handle), (I32, &idx_str), (DOUBLE, val)],
+                    );
+                }
             }
             // Initialize the reserved `this` slot to 0.0 so reads
             // don't return garbage before any patch happens.

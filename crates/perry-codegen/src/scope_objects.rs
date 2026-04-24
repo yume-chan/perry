@@ -63,7 +63,24 @@ pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
 }
 
 /// Determine if a local needs to be stored in a scope object instead of a direct alloca.
-/// Currently returns false (using old box-based system).
-pub fn local_needs_scope_object(_local_id: LocalId, _analysis: &CaptureAnalysis) -> bool {
-    false // For now, keep using the old box-based system
+pub fn local_needs_scope_object(local_id: LocalId, analysis: &CaptureAnalysis) -> bool {
+    // Check if this local ID appears in any scope's captured variables
+    for scope_ctx in analysis.scopes.values() {
+        if scope_ctx.captured_variables.contains(&local_id) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Get the scope and index for a captured variable in a scope object.
+/// Returns (ScopeId, variable_index_in_scope) if the local is captured.
+pub fn get_scope_and_index(local_id: LocalId, analysis: &CaptureAnalysis) -> Option<(ScopeId, usize)> {
+    // Find which scope this local is captured in and its index within that scope
+    for scope_ctx in analysis.scopes.values() {
+        if let Some(index) = scope_ctx.get_capture_index(local_id) {
+            return Some((scope_ctx.scope_id, index));
+        }
+    }
+    None
 }

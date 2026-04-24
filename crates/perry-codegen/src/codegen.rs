@@ -1751,6 +1751,7 @@ fn compile_function(
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: f.scope_capture_analysis.clone(),
         closure_auto_captures_cache: HashMap::new(),
+        closure_scope_indices: HashMap::new(),
     };
     
     // Phase 3: Initialize scope objects for closures if present
@@ -2040,10 +2041,30 @@ fn compile_closure(
         scope_ptrs: HashMap::new(),
         scope_capture_analysis,
         closure_auto_captures_cache: HashMap::new(),
+        closure_scope_indices: HashMap::new(),
     };
 
     // Phase 3: Initialize scope objects for nested closures if present
     scope_objects::initialize_scope_objects(&mut ctx)?;
+    
+    // Phase 3b: Compute scope indices for closure body reading
+    // If using scope objects, compute which scopes this closure captures
+    // and map them to their indices in the capture array.
+    if let Some(analysis) = &ctx.scope_capture_analysis {
+        // Collect all unique scopes from auto_captures, in deterministic order
+        let mut scopes_used: std::collections::BTreeMap<perry_hir::ScopeId, ()> = 
+            std::collections::BTreeMap::new();
+        for cap_id in &auto_captures {
+            if let Some((scope_id, _)) = crate::scope_objects::get_scope_and_index(*cap_id, analysis) {
+                scopes_used.insert(scope_id, ());
+            }
+        }
+        
+        // Build the mapping: each scope gets an index in the capture array
+        for (idx, scope_id) in scopes_used.keys().enumerate() {
+            ctx.closure_scope_indices.insert(*scope_id, idx);
+        }
+    }
 
     stmt::lower_stmts(&mut ctx, body)
         .with_context(|| format!("lowering closure body func_id={}", func_id))?;
@@ -2224,6 +2245,7 @@ fn compile_method(
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: method.scope_capture_analysis.clone(),
         closure_auto_captures_cache: HashMap::new(),
+        closure_scope_indices: HashMap::new(),
     };
 
     // Phase 3: Initialize scope objects if present
@@ -2443,6 +2465,7 @@ fn compile_module_entry(
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: None,
         closure_auto_captures_cache: HashMap::new(),
+        closure_scope_indices: HashMap::new(),
         };
         // Register every module-level global's ADDRESS as a GC root so
         // the mark phase can discover pointer-typed values (Maps, Arrays,
@@ -2663,6 +2686,7 @@ fn compile_module_entry(
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: None,
         closure_auto_captures_cache: HashMap::new(),
+        closure_scope_indices: HashMap::new(),
         };
         // Register every module-level global's ADDRESS as a GC root —
         // same reason as the entry-module branch above (issue #36). For
@@ -3062,6 +3086,7 @@ fn compile_static_method(
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: f.scope_capture_analysis.clone(),
         closure_auto_captures_cache: HashMap::new(),
+        closure_scope_indices: HashMap::new(),
     };
     
     // Phase 3: Initialize scope objects if present
