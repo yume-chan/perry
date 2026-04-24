@@ -186,6 +186,7 @@ fn expr_uses_arguments(expr: &ast::Expr) -> bool {
 
 pub(crate) fn lower_fn_decl(ctx: &mut LoweringContext, fn_decl: &ast::FnDecl) -> Result<Function> {
     let name = fn_decl.ident.sym.to_string();
+    eprintln!("[FN_DECL] Enter: {}", name);
     let func_id = ctx.lookup_func(&name).unwrap_or_else(|| ctx.fresh_func());
 
     // Extract type parameters from generic function declaration (e.g., function foo<T, U>(...))
@@ -198,6 +199,7 @@ pub(crate) fn lower_fn_decl(ctx: &mut LoweringContext, fn_decl: &ast::FnDecl) ->
     ctx.enter_type_param_scope(&type_params);
 
     let scope_mark = ctx.enter_scope();
+    eprintln!("[FN_DECL] {}  after enter_scope: locals.len={}", name, ctx.locals.len());
 
     // Pre-scan body for `arguments` references. If the function references
     // `arguments`, we synthesize a trailing rest parameter named "arguments"
@@ -369,7 +371,9 @@ pub(crate) fn lower_fn_decl(ctx: &mut LoweringContext, fn_decl: &ast::FnDecl) ->
         .map(|(_, id, _)| *id)
         .collect();
 
+    eprintln!("[FN_DECL] {} before exit_scope: locals.len={}", name, ctx.locals.len());
     ctx.exit_scope(scope_mark);
+    eprintln!("[FN_DECL] {} after exit_scope: locals.len={}", name, ctx.locals.len());
 
     // Exit type parameter scope
     ctx.exit_type_param_scope();

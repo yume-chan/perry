@@ -822,8 +822,37 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     // globals + getter functions for cross-module access.
     let exported_var_names: std::collections::HashSet<String> =
         hir.exported_objects.iter().cloned().collect();
+    
+    // Debug: check for duplicates in hir.init
+    {
+        let mut let_count = 0;
+        let mut let_ids: std::collections::HashMap<u32, Vec<(String, usize)>> = std::collections::HashMap::new();
+        for (stmt_idx, s) in hir.init.iter().enumerate() {
+            if let perry_hir::Stmt::Let { id, name, .. } = s {
+                let_count += 1;
+                let_ids.entry(*id).or_insert_with(Vec::new).push((name.clone(), stmt_idx));
+            }
+        }
+        eprintln!("[DEBUG] Module {} has {} init statements, {} are Let", &hir.name, hir.init.len(), let_count);
+        for (id, entries) in &let_ids {
+            if entries.len() > 1 {
+                let names: Vec<String> = entries.iter().map(|(n, _)| n.clone()).collect();
+                eprintln!("[ERROR] Let ID {} appears {} times in hir.init for {} at positions: {:?} (names: {:?})", 
+                    id, entries.len(), &hir.name, 
+                    entries.iter().map(|(_, pos)| pos).collect::<Vec<_>>(),
+                    names);
+            }
+        }
+    }
+    
+    let mut module_let_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    
     for s in &hir.init {
         if let perry_hir::Stmt::Let { id, name, ty, .. } = s {
+            if module_let_ids.contains(id) {
+                eprintln!("[ERROR] Duplicate Let ID {} ({}) found during iteration in hir.init for module {}", id, name, &hir.name);
+            }
+            module_let_ids.insert(*id);
             // Always record the declared type for module-level lets
             // so all functions see it (not just the entry function).
             if !matches!(ty, perry_types::Type::Any) {
@@ -848,6 +877,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 // linkage, the optimizer can't make cross-TU assumptions.
                 // The module-unique name (perry_global_<prefix>__N)
                 // prevents symbol collisions across modules.
+                eprintln!("[DEBUG] Adding global {} (ID {}) to module {}", &global_name, id, &hir.name);
                 llmod.add_global(&global_name, DOUBLE, &init_value);
                 module_globals.insert(*id, global_name.clone());
 

@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.142
+**Current Version:** 0.5.143
 
 ## TypeScript Parity Status
 
@@ -161,6 +161,8 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 ## Recent Changes
 
 Keep entries to 1-2 lines max. Full details in CHANGELOG.md.
+
+- **v0.5.143** — Fix namespace var duplicate initialization causing "redefinition of global" LLVM errors in tsc.ts compilation. Root cause: namespace-internal vars were pre-registered at MODULE level in first pass, then lowered again in second pass via `lower_stmt`, creating two Let statements with same LocalId in module.init. Solution: collect namespace var names in a separate pre-pass BEFORE lowering functions, register them in `ctx.locals` so functions can reference them, mark in `pre_registered_module_vars` set, then skip duplicate pre-registration in first pass. `lower_var_decl_with_destructuring` reuses the pre-registered LocalIds when lowering. This ensures single source of truth for each namespace var while maintaining function access to namespace scope.
 
 - **v0.5.142** — Fix critical closure capture double-lowering bug via caching auto_captures in FnCtx. Closures were lowered twice with different contexts, causing compute_auto_captures to return inconsistent capture indices, resulting in SIGSEGV crashes in tsc.ts. Now all closures store/retrieve consistent captures. Fixes parseStrings(), nested function closures, and array.map closures with outer variable captures.
 

@@ -1234,6 +1234,8 @@ pub fn lower_module_with_class_id_and_types(ast_module: &ast::Module, name: &str
 
     // Pre-register module-level variable declarations so function bodies
     // declared before the variable can still reference them via lookup_local
+    eprintln!("[MODULE_PRE_REG] Starting pre-registration");
+    let pre_reg_count_start = ctx.locals.len();
     for item in &ast_module.body {
         let var_decl = match item {
             ast::ModuleItem::Stmt(ast::Stmt::Decl(ast::Decl::Var(v))) => Some(v),
@@ -1261,6 +1263,7 @@ pub fn lower_module_with_class_id_and_types(ast_module: &ast::Module, name: &str
             }
         }
     }
+    eprintln!("[MODULE_PRE_REG] Completed: locals.len went from {} to {}", pre_reg_count_start, ctx.locals.len());
 
     // Pre-register all class declarations so that static method calls between
     // classes declared in the same file resolve correctly regardless of declaration order.
@@ -3225,7 +3228,7 @@ fn lower_namespace_as_class(
                     _ => {}
                 }
             }
-            // Pre-register non-exported functions (hoisted like JS)
+             // Pre-register non-exported functions (hoisted like JS)
             ast::ModuleItem::Stmt(ast::Stmt::Decl(ast::Decl::Fn(fn_decl))) => {
                 if fn_decl.function.body.is_some() {
                     let name = fn_decl.ident.sym.to_string();
@@ -3235,20 +3238,12 @@ fn lower_namespace_as_class(
                     }
                 }
             }
-            // Pre-register non-exported variables
-            ast::ModuleItem::Stmt(ast::Stmt::Decl(ast::Decl::Var(var_decl))) => {
-                for decl in &var_decl.decls {
-                    if let ast::Pat::Ident(ident) = &decl.name {
-                        let name = ident.id.sym.to_string();
-                        if ctx.lookup_local(&name).is_none() {
-                            let ty = ident.type_ann.as_ref()
-                                .map(|ann| extract_ts_type(&ann.type_ann))
-                                .unwrap_or(Type::Any);
-                            ctx.define_local(name.clone(), ty);
-                            ctx.pre_registered_module_vars.insert(name);
-                        }
-                    }
-                }
+            // DO NOT pre-register non-exported namespace variables.
+            // Variables with the same name in functions will have different scopes.
+            // When namespace functions are lowered, they have direct access to
+            // namespace vars through the lowering of the namespace body.
+            ast::ModuleItem::Stmt(ast::Stmt::Decl(ast::Decl::Var(_))) => {
+                // Skip - will be lowered in the second pass
             }
             _ => {}
         }
@@ -3256,6 +3251,24 @@ fn lower_namespace_as_class(
 
     // Register class and statics early so method bodies can reference them
     ctx.register_class_statics(ns_name.to_string(), Vec::new(), static_method_names.clone());
+
+    // Pre-collect all namespace var names and register them in the locals list
+    // This ensures functions can reference namespace vars before they're lowered.
+    // These are registered as LOCAL-LEVEL vars in the namespace scope, separate from module-level.
+    let mut namespace_var_names: Vec<String> = Vec::new();
+    for item in items {
+        if let ast::ModuleItem::Stmt(ast::Stmt::Decl(ast::Decl::Var(var_decl))) = item {
+            for decl in &var_decl.decls {
+                if let Ok(name) = get_binding_name(&decl.name) {
+                    let ty = extract_binding_type(&decl.name);
+                    let id = ctx.define_local(name.clone(), ty);
+                    // Mark it so we know not to re-register it later
+                    ctx.pre_registered_module_vars.insert(name.clone());
+                    namespace_var_names.push(name);
+                }
+            }
+        }
+    }
 
     // Set current namespace so internal function calls resolve as StaticMethodCall
     let prev_namespace = ctx.current_namespace.take();
@@ -4101,15 +4114,12 @@ fn lower_stmt(
                         property: "value".to_string(),
                     }),
                 });
-                // Lower user body statements. lower_stmt appends to module.init,
-                // so we snapshot and drain to capture the body stmts.
-                let init_before = module.init.len();
-                if let ast::Stmt::Block(block) = &*for_of_stmt.body {
-                    for s in &block.stmts {
-                        lower_stmt(ctx, module, s)?;
-                    }
-                }
-                let mut user_body: Vec<Stmt> = module.init.drain(init_before..).collect();
+                // Lower user body statements using lower_body_stmt which returns Vec<Stmt>
+                let mut user_body = if let ast::Stmt::Block(block) = &*for_of_stmt.body {
+                    lower_block_stmt(ctx, block)?
+                } else {
+                    lower_body_stmt(ctx, &for_of_stmt.body)?
+                };
                 body_stmts.append(&mut user_body);
                 // __result = __iter.next()
                 body_stmts.push(Stmt::Expr(Expr::LocalSet(
