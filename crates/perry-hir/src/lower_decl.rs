@@ -15,108 +15,6 @@ use crate::lower_patterns::*;
 use crate::destructuring::*;
 use crate::analysis::*;
 
-/// Pre-pass: discover all locally-defined variables (Let statements) in a function body
-/// recursively through all nested structures (if/while/for/try blocks).
-/// Variables are registered in the current scope BEFORE we start lowering, so that:
-/// 1. Update expressions (++) on variables declared later in the function work
-/// 2. Closures can reference variables declared anywhere in the function body
-/// 3. JavaScript hoisting-like behavior for let declarations
-fn discover_locals_in_scope(ctx: &mut LoweringContext, stmts: &[ast::Stmt]) {
-    for stmt in stmts {
-        discover_locals_in_stmt(ctx, stmt);
-    }
-}
-
-fn discover_locals_in_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) {
-    match stmt {
-        // Direct let/var declaration
-        ast::Stmt::Decl(ast::Decl::Var(var_decl)) => {
-            for decl in &var_decl.decls {
-                if let Ok(name) = get_pat_name(&decl.name) {
-                    let ty = Type::Any;
-                    ctx.define_local(name, ty);
-                }
-            }
-        }
-        // Nested blocks
-        ast::Stmt::Block(block) => {
-            discover_locals_in_scope(ctx, &block.stmts);
-        }
-        // If statement
-        ast::Stmt::If(if_stmt) => {
-            discover_locals_in_stmt(ctx, &if_stmt.cons);
-            if let Some(alt) = &if_stmt.alt {
-                discover_locals_in_stmt(ctx, alt);
-            }
-        }
-        // While statement
-        ast::Stmt::While(w) => {
-            discover_locals_in_stmt(ctx, &w.body);
-        }
-        // DoWhile statement
-        ast::Stmt::DoWhile(w) => {
-            discover_locals_in_stmt(ctx, &w.body);
-        }
-        // For statement
-        ast::Stmt::For(f) => {
-            // Also check init for var declarations
-            if let Some(ast::VarDeclOrExpr::VarDecl(vd)) = &f.init {
-                for decl in &vd.decls {
-                    if let Ok(name) = get_pat_name(&decl.name) {
-                        ctx.define_local(name, Type::Any);
-                    }
-                }
-            }
-            discover_locals_in_stmt(ctx, &f.body);
-        }
-        // ForIn statement
-        ast::Stmt::ForIn(f) => {
-            // Check left side for var declarations
-            if let ast::ForHead::VarDecl(vd) = &f.left {
-                for decl in &vd.decls {
-                    if let Ok(name) = get_pat_name(&decl.name) {
-                        ctx.define_local(name, Type::Any);
-                    }
-                }
-            }
-            discover_locals_in_stmt(ctx, &f.body);
-        }
-        // ForOf statement
-        ast::Stmt::ForOf(f) => {
-            // Check left side for var declarations
-            if let ast::ForHead::VarDecl(vd) = &f.left {
-                for decl in &vd.decls {
-                    if let Ok(name) = get_pat_name(&decl.name) {
-                        ctx.define_local(name, Type::Any);
-                    }
-                }
-            }
-            discover_locals_in_stmt(ctx, &f.body);
-        }
-        // Try statement
-        ast::Stmt::Try(t) => {
-            discover_locals_in_scope(ctx, &t.block.stmts);
-            if let Some(catch) = &t.handler {
-                discover_locals_in_scope(ctx, &catch.body.stmts);
-            }
-            if let Some(finally) = &t.finalizer {
-                discover_locals_in_scope(ctx, &finally.stmts);
-            }
-        }
-        // Labeled statement
-        ast::Stmt::Labeled(labeled) => {
-            discover_locals_in_stmt(ctx, &labeled.body);
-        }
-        // Switch statement
-        ast::Stmt::Switch(s) => {
-            for case in &s.cases {
-                discover_locals_in_scope(ctx, &case.cons);
-            }
-        }
-        // Other statements: expr, return, throw, break, continue, etc.
-        _ => {}
-    }
-}
 
 /// Build `if (param === undefined) { param = default; }` stmts for every
 /// param with a default value. Prepended to function/constructor bodies so
@@ -429,14 +327,9 @@ pub(crate) fn lower_fn_decl(ctx: &mut LoweringContext, fn_decl: &ast::FnDecl) ->
         destructuring_stmts.extend(stmts);
     }
 
-    // Pre-pass: discover all variables declared in the function body (Let statements)
-    // This is necessary to handle forward references by nested functions and closures
-    // Example: a closure at statement[5] might reference a variable declared at statement[10]
-    if let Some(ref block) = fn_decl.function.body {
-        discover_locals_in_scope(ctx, &block.stmts);
-    }
-
     // Lower body
+    // Note: pre_register_all_declarations() is called inside lower_block_stmt()
+    // to handle all variable pre-registration and forward references
     let mut body = if let Some(ref block) = fn_decl.function.body {
         lower_block_stmt(ctx, block)?
     } else {
@@ -1928,10 +1821,11 @@ pub(crate) fn lower_private_prop(ctx: &mut LoweringContext, prop: &ast::PrivateP
 /// This implements JavaScript function hoisting: all function declarations are
 /// available throughout the entire block, even before their declaration appears.
 /// 
-/// We only pre-register function IDs, NOT local variables. This ensures that:
+/// Pre-register both function IDs and all variable declarations (var, const, let).
+/// This ensures that:
 /// 1. Self-recursive calls and forward references resolve via lookup_func → FuncRef
-/// 2. No uninitialized locals are captured by closures (which would cause "null box pointer" crashes)
-/// 3. When the Fn statement is lowered, the local is properly defined with its initializer
+/// 2. Closures can capture any variable in their scope, regardless of declaration order
+/// 3. When statements are hoisted (functions first), captures refer to registered locals
 fn pre_register_all_declarations(ctx: &mut LoweringContext, block: &ast::BlockStmt) -> Result<()> {
     for stmt in &block.stmts {
         match stmt {
@@ -1947,13 +1841,22 @@ fn pre_register_all_declarations(ctx: &mut LoweringContext, block: &ast::BlockSt
                     }
                 }
             }
-            // Pre-register variable declarations so they can be referenced throughout the scope
-            ast::Stmt::Decl(ast::Decl::Var(var_decl)) => {
-                for decl in &var_decl.decls {
-                    if let Ok(name) = get_pat_name(&decl.name) {
-                        let ty = Type::Any;
-                        ctx.define_local(name, ty);
+            // Pre-register ALL variable declarations (var, const, let)
+            // In JavaScript, only `var` and function declarations are hoisted to function scope.
+            // `const` and `let` are block-scoped but we still pre-register them so closures
+            // can capture them regardless of declaration order.
+            ast::Stmt::Decl(decl) => {
+                match decl {
+                    ast::Decl::Var(var_decl) => {
+                        for v in &var_decl.decls {
+                            if let Ok(name) = get_pat_name(&v.name) {
+                                if ctx.lookup_local(&name).is_none() {
+                                    ctx.define_local(name.clone(), Type::Any);
+                                }
+                            }
+                        }
                     }
+                    _ => {} // Functions already handled, other decls don't introduce locals
                 }
             }
             _ => {}
@@ -1967,28 +1870,13 @@ pub(crate) fn lower_block_stmt(ctx: &mut LoweringContext, block: &ast::BlockStmt
     // and closures can capture variables regardless of declaration order
     pre_register_all_declarations(ctx, block)?;
     
-    let mut fn_stmts = Vec::new();
-    let mut other_stmts = Vec::new();
-    
-    // Separate Fn declarations from other statements
-    for stmt in &block.stmts {
-        if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
-            if fn_decl.function.body.is_some() {
-                fn_stmts.push(stmt);
-            }
-        } else {
-            other_stmts.push(stmt);
-        }
-    }
-    
-    // First emit all Fn statements (hoisted), then all other statements
-    // This implements JavaScript function hoisting where function declarations
-    // are available throughout their scope even before the source declaration
+    // Lower statements in source order. Variables are pre-registered above so forward
+    // references from nested functions work correctly. JavaScript hoisting is handled
+    // by pre-registration: functions are available throughout their scope because
+    // their FuncIds are registered, and variables are available throughout because
+    // their LocalIds are registered — the actual initialization happens in source order.
     let mut stmts = Vec::new();
-    for stmt in fn_stmts {
-        stmts.extend(lower_body_stmt(ctx, stmt)?);
-    }
-    for stmt in other_stmts {
+    for stmt in &block.stmts {
         stmts.extend(lower_body_stmt(ctx, stmt)?);
     }
     
@@ -2005,28 +1893,13 @@ pub(crate) fn lower_block_stmt_scoped(ctx: &mut LoweringContext, block: &ast::Bl
     // and closures can capture variables regardless of declaration order
     pre_register_all_declarations(ctx, block)?;
     
-    let mut fn_stmts = Vec::new();
-    let mut other_stmts = Vec::new();
-    
-    // Separate Fn declarations from other statements
-    for stmt in &block.stmts {
-        if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
-            if fn_decl.function.body.is_some() {
-                fn_stmts.push(stmt);
-            }
-        } else {
-            other_stmts.push(stmt);
-        }
-    }
-    
-    // First emit all Fn statements (hoisted), then all other statements
-    // This implements JavaScript function hoisting where function declarations
-    // are available throughout their scope even before the source declaration
+    // Lower statements in source order. Variables are pre-registered above so forward
+    // references from nested functions work correctly. JavaScript hoisting is handled
+    // by pre-registration: functions are available throughout their scope because
+    // their FuncIds are registered, and variables are available throughout because
+    // their LocalIds are registered — the actual initialization happens in source order.
     let mut stmts = Vec::new();
-    for stmt in fn_stmts {
-        stmts.extend(lower_body_stmt(ctx, stmt)?);
-    }
-    for stmt in other_stmts {
+    for stmt in &block.stmts {
         stmts.extend(lower_body_stmt(ctx, stmt)?);
     }
     
@@ -2245,10 +2118,14 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 let local_id = ctx.lookup_local(&func_name)
                     .unwrap_or_else(|| ctx.define_local(func_name.clone(), Type::Any));
 
+
                 let scope_mark = ctx.enter_scope();
 
                 // Track outer locals for capture detection
+                // Note: we exclude the function's own name (local_id) since that's not
+                // actually an outer scope variable - it's the storage location for the closure itself
                 let outer_locals: Vec<(String, LocalId)> = ctx.locals.iter()
+                    .filter(|(name, _, _)| name != &func_name)
                     .map(|(name, id, _)| (name.clone(), *id))
                     .collect();
 
@@ -2313,6 +2190,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                     .collect();
                 captures.sort();
                 captures.dedup();
+                
                 captures = ctx.filter_module_level_captures(captures);
 
                 // Detect mutable captures
@@ -2326,6 +2204,11 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                     .copied()
                     .collect();
 
+                // Analyze captures for nested closures within this function
+                let mut closure_locals = params.iter().map(|p| p.id).collect::<Vec<_>>();
+                closure_locals.extend(outer_locals.iter().map(|(_, id)| *id));
+                let closure_capture_analysis = crate::capture_analysis::analyze_captures(&body, &closure_locals);
+
                 let closure = Expr::Closure {
                     func_id,
                     params,
@@ -2336,7 +2219,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                     captures_this: false,
                     enclosing_class: None,
                     is_async: fn_decl.function.is_async,
-                    scope_capture_analysis: None,
+                    scope_capture_analysis: Some(Box::new(closure_capture_analysis)),
                 };
                 result.push(Stmt::Let {
                     id: local_id,

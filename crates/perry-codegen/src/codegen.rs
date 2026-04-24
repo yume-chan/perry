@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Context, Result};
-use perry_hir::{Function, Module as HirModule};
+use perry_hir::{Expr, Function, Module as HirModule, Stmt};
 
 use crate::expr::FnCtx;
 use crate::module::LlModule;
@@ -705,6 +705,74 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             scan_body(&ctor.params, &ctor.body, &mut referenced_from_fn);
         }
     }
+    for f in &hir.functions {
+    }
+    
+    // Collect all closures in the module (used in both Phase D and Phase F).
+    // This must be done once and reused so we don't try to lower the same
+    // closure twice with different contexts.
+    let mut all_closures_seen: std::collections::HashSet<perry_types::FuncId> = std::collections::HashSet::new();
+    let mut all_closures: Vec<(perry_types::FuncId, perry_hir::Expr)> = Vec::new();
+    {
+        // First, count how many Closure exprs with func_id=1 exist before collection
+        let mut closure_count_before = 0;
+        for f in &hir.functions {
+            fn count_closures(e: &Expr) -> usize {
+                let mut count = 0;
+                match e {
+                    Expr::Closure { body, .. } => {
+                        count += 1;
+                        for stmt in body {
+                            if let Stmt::Expr(e) = stmt {
+                                count += count_closures(e);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                count
+            }
+            fn count_in_stmts(stmts: &[Stmt]) -> usize {
+                let mut count = 0;
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Let { init: Some(e), .. } => count += count_closures(e),
+                        Stmt::Expr(e) => count += count_closures(e),
+                        Stmt::Return(Some(e)) => count += count_closures(e),
+                        _ => {}
+                    }
+                }
+                count
+            }
+            closure_count_before += count_in_stmts(&f.body);
+        }
+        
+        for f in &hir.functions {
+            collect_closures_in_stmts(&f.body, &mut all_closures_seen, &mut all_closures);
+        }
+        for c in &hir.classes {
+            for m in &c.methods {
+                collect_closures_in_stmts(&m.body, &mut all_closures_seen, &mut all_closures);
+            }
+            if let Some(ctor) = &c.constructor {
+                collect_closures_in_stmts(&ctor.body, &mut all_closures_seen, &mut all_closures);
+            }
+        }
+        collect_closures_in_stmts(&hir.init, &mut all_closures_seen, &mut all_closures);
+    }
+
+    // Phase D: Mark closures that reference themselves as global
+    // (so the closure body can see the live storage instead of a stale snapshot).
+    {
+        for (_, closure_expr) in &all_closures {
+            if let perry_hir::Expr::Closure { params, body, .. } = closure_expr {
+                scan_body(params, body, &mut referenced_from_fn);
+            }
+        }
+    }
+
+    // Phase D old code (to be removed)
+    /*
     // Also walk every closure body. A self-referencing recursive
     // closure (`let f = (n) => f(n-1)`) needs `f` to be globalized
     // so the closure body can see the live storage instead of a
@@ -731,6 +799,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             }
         }
     }
+    */
 
     let mut module_globals: HashMap<u32, String> = HashMap::new();
     // Module global types: propagated to every FnCtx so functions that
@@ -1091,39 +1160,9 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
 
     // Pre-walk for closures: every `Expr::Closure` in the program needs
     // its body emitted as a top-level LLVM function so the closure
-    // creation site can take its address. Collect them all first, then
-    // emit each via `compile_closure` (Phase D.1).
-    //
-    // We must walk every container that the compile loop below also
-    // compiles — methods, ctors, getters, setters, static_methods —
-    // otherwise a closure body in (say) a `get size() { return arr.filter(...).length }`
-    // ends up referenced by `js_closure_alloc(@perry_closure_*)` but
-    // never defined, and clang errors with "use of undefined value".
-    let mut closures: Vec<(perry_types::FuncId, perry_hir::Expr)> = Vec::new();
-    {
-        let mut seen: std::collections::HashSet<perry_types::FuncId> = std::collections::HashSet::new();
-        for f in &hir.functions {
-            collect_closures_in_stmts(&f.body, &mut seen, &mut closures);
-        }
-        for c in &hir.classes {
-            for m in &c.methods {
-                collect_closures_in_stmts(&m.body, &mut seen, &mut closures);
-            }
-            for (_, getter_fn) in &c.getters {
-                collect_closures_in_stmts(&getter_fn.body, &mut seen, &mut closures);
-            }
-            for (_, setter_fn) in &c.setters {
-                collect_closures_in_stmts(&setter_fn.body, &mut seen, &mut closures);
-            }
-            for sm in &c.static_methods {
-                collect_closures_in_stmts(&sm.body, &mut seen, &mut closures);
-            }
-            if let Some(ctor) = &c.constructor {
-                collect_closures_in_stmts(&ctor.body, &mut seen, &mut closures);
-            }
-        }
-        collect_closures_in_stmts(&hir.init, &mut seen, &mut closures);
-    }
+    // creation site can take its address. We've already collected all
+    // closures in Phase D, so just reuse that list.
+    let closures = &all_closures;
 
     // Build closure rest param index: for each closure that has a rest
     // parameter, record its func_id → rest param position. Used by
@@ -1222,7 +1261,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     }
 
     // Lower each closure body as a top-level LLVM function.
-    for (func_id, closure_expr) in &closures {
+    for (func_id, closure_expr) in closures {
         compile_closure(
             &mut llmod,
             *func_id,
@@ -1672,6 +1711,7 @@ fn compile_function(
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: f.scope_capture_analysis.clone(),
+        closure_auto_captures_cache: HashMap::new(),
     };
     
     // Phase 3: Initialize scope objects for closures if present
@@ -1749,6 +1789,7 @@ fn compile_closure(
     closure_rest_params: &HashMap<u32, usize>,
     cross_module: &CrossModuleCtx,
 ) -> Result<()> {
+    
     // Destructure the closure expression. We trust that the caller
     // passes only `Expr::Closure` here (from `collect_closures_*`).
     let (params, body, captures, captures_this, enclosing_class, scope_capture_analysis) = match closure_expr {
@@ -1959,6 +2000,7 @@ fn compile_closure(
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
         scope_capture_analysis,
+        closure_auto_captures_cache: HashMap::new(),
     };
 
     // Phase 3: Initialize scope objects for nested closures if present
@@ -2142,6 +2184,7 @@ fn compile_method(
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: method.scope_capture_analysis.clone(),
+        closure_auto_captures_cache: HashMap::new(),
     };
 
     // Phase 3: Initialize scope objects if present
@@ -2360,6 +2403,7 @@ fn compile_module_entry(
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: None,
+        closure_auto_captures_cache: HashMap::new(),
         };
         // Register every module-level global's ADDRESS as a GC root so
         // the mark phase can discover pointer-typed values (Maps, Arrays,
@@ -2579,6 +2623,7 @@ fn compile_module_entry(
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: None,
+        closure_auto_captures_cache: HashMap::new(),
         };
         // Register every module-level global's ADDRESS as a GC root —
         // same reason as the entry-module branch above (issue #36). For
@@ -2977,6 +3022,7 @@ fn compile_static_method(
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: f.scope_capture_analysis.clone(),
+        closure_auto_captures_cache: HashMap::new(),
     };
     
     // Phase 3: Initialize scope objects if present

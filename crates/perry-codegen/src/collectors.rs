@@ -317,6 +317,7 @@ fn collect_closures_in_expr(
         Expr::Closure { func_id, body, .. } => {
             if seen.insert(*func_id) {
                 out.push((*func_id, e.clone()));
+            } else {
             }
             // Recurse into the closure body so nested closures are
             // collected too.

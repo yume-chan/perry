@@ -550,6 +550,13 @@ pub(crate) struct FnCtx<'a> {
     /// `None` if using the old box-based system. When `Some`, closures
     /// are created with scope pointers instead of individual captures.
     pub scope_capture_analysis: Option<Box<CaptureAnalysis>>,
+
+    /// Cache for auto-computed closure captures. Maps `func_id → captures`.
+    /// Used to ensure that `compute_auto_captures()` returns the same result
+    /// even if called multiple times for the same closure with different
+    /// contexts. The first computed result is cached; subsequent calls return
+    /// the cached result instead of recomputing.
+    pub closure_auto_captures_cache: std::collections::HashMap<u32, Vec<u32>>,
 }
 
 /// (Issue #50) Info about a flat-folded const 2D int array.
@@ -689,7 +696,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 return Ok(ctx.block().call(
                     DOUBLE,
                     "js_closure_get_capture_f64",
-                    &[(I64, &closure_ptr), (I32, &idx_str)],
+                    &[(I64, &closure_ptr), (I32, &capture_idx.to_string())],
                 ));
             }
             // Boxed local in enclosing function: load the slot (box
@@ -2876,7 +2883,18 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // We must detect the same set as `compile_closure` so the
             // creation site and the body lower with consistent slot
             // indices.
-            let auto_captures = compute_auto_captures(ctx, params, body, captures);
+            //
+            // CACHING: Use the closure_auto_captures_cache to avoid
+            // recomputing captures with different contexts. If we've
+            // already computed captures for this func_id, reuse the
+            // cached result even if ctx.locals has changed.
+            let auto_captures = if let Some(cached) = ctx.closure_auto_captures_cache.get(func_id) {
+                cached.clone()
+            } else {
+                let computed = compute_auto_captures(ctx, params, body, captures);
+                ctx.closure_auto_captures_cache.insert(*func_id, computed.clone());
+                computed
+            };
 
             // Lower each captured value from the OUTER scope (this is
             // an outer-scope access, NOT a closure capture access — at
@@ -2890,6 +2908,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // this, each closure would get a snapshot of the box's
             // current value.
             let mut captured_values: Vec<String> = Vec::with_capacity(auto_captures.len());
+            
             for cap_id in &auto_captures {
                 if ctx.boxed_vars.contains(cap_id) {
                     // If the enclosing function has this id boxed,
@@ -8459,6 +8478,7 @@ fn lower_object_literal(ctx: &mut FnCtx<'_>, props: &[(String, Expr)]) -> Result
         let key_handle_global = format!("@{}", ctx.strings.entry(key_idx).handle_global);
 
         if let Expr::Closure {
+            func_id: cfunc_id,
             params: cparams,
             body: cbody,
             captures: ccaps,
@@ -8466,7 +8486,13 @@ fn lower_object_literal(ctx: &mut FnCtx<'_>, props: &[(String, Expr)]) -> Result
             ..
         } = value_expr
         {
-            let auto_caps = compute_auto_captures(ctx, cparams, cbody, ccaps);
+            let auto_caps = if let Some(cached) = ctx.closure_auto_captures_cache.get(cfunc_id) {
+                cached.clone()
+            } else {
+                let computed = compute_auto_captures(ctx, cparams, cbody, ccaps);
+                ctx.closure_auto_captures_cache.insert(*cfunc_id, computed.clone());
+                computed
+            };
             let this_idx = auto_caps.len() as u32;
 
             let v = lower_expr(ctx, value_expr)?;

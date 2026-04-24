@@ -1418,6 +1418,13 @@ pub(crate) fn lower_var_decl_with_destructuring(
                     *existing_ty = ty.clone();
                 }
                 id
+            } else if let Some(existing_id) = ctx.lookup_local(&name) {
+                // Variable was pre-registered at function-level (nested scope)
+                // Reuse the existing LocalId and update the type
+                if let Some((_, _, existing_ty)) = ctx.locals.iter_mut().rev().find(|(n, _, _)| n == &name) {
+                    *existing_ty = ty.clone();
+                }
+                existing_id
             } else {
                 ctx.define_local(name.clone(), ty.clone())
             };
@@ -1451,6 +1458,13 @@ pub(crate) fn lower_var_decl_with_destructuring(
                     *existing_ty = ty.clone();
                 }
                 id
+            } else if let Some(existing_id) = ctx.lookup_local(&name) {
+                // Variable was pre-registered at function-level (nested scope)
+                // Reuse the existing LocalId and update the type
+                if let Some((_, _, existing_ty)) = ctx.locals.iter_mut().rev().find(|(n, _, _)| n == &name) {
+                    *existing_ty = ty.clone();
+                }
+                existing_id
             } else {
                 ctx.define_local(name.clone(), ty.clone())
             };
