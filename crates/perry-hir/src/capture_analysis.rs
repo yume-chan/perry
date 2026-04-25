@@ -70,6 +70,7 @@ struct CaptureAnalyzer {
     next_scope_id: usize,
     scope_stack: Vec<ScopeId>,
     closures: Vec<ClosureCaptureInfo>,
+    inside_closure: bool,  // Track if we're currently inside a closure body
 }
 
 impl CaptureAnalyzer {
@@ -79,6 +80,7 @@ impl CaptureAnalyzer {
             next_scope_id: 0,
             scope_stack: Vec::new(),
             closures: Vec::new(),
+            inside_closure: false,
         }
     }
 
@@ -113,6 +115,10 @@ impl CaptureAnalyzer {
     }
 
     fn mark_variable_captured(&mut self, var_id: LocalId) {
+        // Only mark as captured if we're inside a closure
+        if !self.inside_closure {
+            return;
+        }
         if let Some(scope_id) = self.find_scope_for_variable(var_id) {
             if let Some(scope) = self.scopes.get_mut(&scope_id) {
                 scope.mark_captured(var_id);
@@ -243,20 +249,36 @@ impl CaptureAnalyzer {
             Expr::Closure { body, captures, .. } => {
                 let mut closure_info = ClosureCaptureInfo::new();
                 for &var_id in captures {
-                    self.mark_variable_captured(var_id);
+                    // Explicitly mark closure captures (bypass inside_closure check)
                     if let Some(scope_id) = self.find_scope_for_variable(var_id) {
+                        if let Some(scope) = self.scopes.get_mut(&scope_id) {
+                            scope.mark_captured(var_id);
+                        }
                         closure_info.add_capture(scope_id, var_id);
                     }
                 }
                 closure_info.finalize_scope_indices();
                 self.closures.push(closure_info);
+                
+                // Mark that we're inside a closure while walking the body
+                let was_inside_closure = self.inside_closure;
+                self.inside_closure = true;
                 for stmt in body {
                     self.walk_stmt(stmt);
                 }
+                self.inside_closure = was_inside_closure;
             }
-            Expr::LocalGet(id) => self.mark_variable_captured(*id),
+            Expr::LocalGet(id) => {
+                // Only mark as captured if we're inside a closure
+                if self.inside_closure {
+                    self.mark_variable_captured(*id);
+                }
+            }
             Expr::LocalSet(id, e) => {
-                self.mark_variable_captured(*id);
+                // Only mark as captured if we're inside a closure
+                if self.inside_closure {
+                    self.mark_variable_captured(*id);
+                }
                 self.walk_expr(e);
             }
             Expr::GlobalSet(_, e) => self.walk_expr(e),
