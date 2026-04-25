@@ -452,6 +452,9 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
                 // Write to scope object if this local is captured (new scope object system)
                 if let Some(analysis) = &ctx.scope_capture_analysis {
                     if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
+                        // Ensure the scope is allocated (lazy allocation for nested scopes)
+                        crate::scope_objects::ensure_scope_allocated(ctx, scope_id)?;
+                        
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let blk = ctx.block();
                             let scope_ptr = blk.load(crate::types::I64, &scope_ptr_slot);

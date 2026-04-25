@@ -700,6 +700,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         }
                     } else {
                         // Not in a closure body: get from the scope pointer directly
+                        // Ensure scope is allocated (lazy allocation for nested scopes)
+                        crate::scope_objects::ensure_scope_allocated(ctx, scope_id)?;
+                        
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let blk = ctx.block();
                             // Load the scope pointer from its stack slot
@@ -857,6 +860,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         }
                     } else {
                         // Not in a closure body: write to the scope pointer directly
+                        // Ensure scope is allocated (lazy allocation for nested scopes)
+                        crate::scope_objects::ensure_scope_allocated(ctx, scope_id)?;
+                        
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let blk = ctx.block();
                             // Load the scope pointer from its stack slot

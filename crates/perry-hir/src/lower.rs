@@ -2438,20 +2438,20 @@ fn collect_closure_assigned_in_body_expr(expr: &Expr, out: &mut std::collections
 /// which scope each captured variable belongs to and where to access it from scope objects.
 fn populate_enclosing_scope_capture_analysis(module: &mut Module) {
     use std::collections::HashMap;
-    
-    
+
+
     // Build a map from FuncId -> Function so we can look up enclosing functions
     let mut func_map: HashMap<FuncId, *const Function> = HashMap::new();
     for func in &module.functions {
         func_map.insert(func.id, func as *const Function);
     }
-    
-    
+
+
     // For each function, walk its body and populate closures' enclosing_scope_capture_analysis
     for func in &mut module.functions {
         populate_closures_in_stmts(&mut func.body, &func_map);
     }
-    
+
     // Also process class methods
     for class in &mut module.classes {
         for method in &mut class.methods {
@@ -2464,7 +2464,7 @@ fn populate_enclosing_scope_capture_analysis(module: &mut Module) {
             populate_closures_in_stmts(&mut ctor.body, &func_map);
         }
     }
-    
+
 }
 
 fn populate_closures_in_stmts(stmts: &mut [Stmt], func_map: &std::collections::HashMap<FuncId, *const Function>) {
@@ -2534,7 +2534,7 @@ fn populate_closures_in_expr(expr: &mut Expr, func_map: &std::collections::HashM
                 }
             } else {
             }
-            
+
             // Recurse into the closure body to process any nested closures
             populate_closures_in_stmts(body, func_map);
         }
@@ -3121,6 +3121,118 @@ fn lower_module_decl(
                                     module.widgets.push(widget_decl);
                                     continue;
                                 }
+                            }
+
+                            if var_decl.kind == ast::VarDeclKind::Const {
+                              // Check if this is an arrow function and convert to normal function
+                              // export const fn = () => {} → export function fn() {}
+                              if let ast::Expr::Arrow(arrow) = init.as_ref() {
+                                  // Create a synthetic Function from the arrow for lowering
+                                  let func_id = ctx.fresh_func();
+                                  let scope_mark = ctx.enter_scope();
+
+                                  // Lower parameters
+                                  let mut params = Vec::new();
+                                  let mut destructuring_params: Vec<(LocalId, ast::Pat)> = Vec::new();
+                                  for param in &arrow.params {
+                                      let param_name = get_pat_name(param)?;
+                                      let param_default = get_param_default(ctx, param)?;
+                                      let is_rest = is_rest_param(param);
+                                      let param_ty = get_pat_type(param, ctx);
+                                      let param_id = ctx.define_local(param_name.clone(), param_ty.clone());
+                                      params.push(Param {
+                                          id: param_id,
+                                          name: param_name,
+                                          ty: param_ty,
+                                          default: param_default,
+                                          is_rest,
+                                      });
+                                      if is_destructuring_pattern(param) {
+                                          destructuring_params.push((param_id, param.clone()));
+                                      }
+                                  }
+
+                                  // Lower body
+                                  let mut body = match &*arrow.body {
+                                      ast::BlockStmtOrExpr::BlockStmt(block) => {
+                                          let mut result = Vec::new();
+                                          for stmt in &block.stmts {
+                                              result.extend(crate::lower_decl::lower_body_stmt(ctx, stmt)?);
+                                          }
+                                          result
+                                      }
+                                      ast::BlockStmtOrExpr::Expr(expr) => {
+                                          let return_expr = lower_expr(ctx, expr)?;
+                                          vec![Stmt::Return(Some(return_expr))]
+                                      }
+                                  };
+
+                                  // Add destructuring statements
+                                  let mut destructuring_stmts = Vec::new();
+                                  for (param_id, pat) in &destructuring_params {
+                                      let stmts = generate_param_destructuring_stmts(ctx, pat, *param_id)?;
+                                      destructuring_stmts.extend(stmts);
+                                  }
+                                  if !destructuring_stmts.is_empty() {
+                                      let mut new_body = destructuring_stmts;
+                                      new_body.append(&mut body);
+                                      body = new_body;
+                                  }
+
+                                  ctx.exit_scope(scope_mark);
+
+                                  // Extract return type
+                                  let return_type = if let Some(ref rt) = arrow.return_type {
+                                      extract_ts_type_with_ctx(&rt.type_ann, Some(ctx))
+                                  } else {
+                                      Type::Any
+                                  };
+
+                                  let func = Function {
+                                      id: func_id,
+                                      name: name.clone(),
+                                      type_params: Vec::new(),
+                                      params,
+                                      return_type: return_type.clone(),
+                                      body,
+                                      is_async: arrow.is_async,
+                                      is_generator: false,
+                                      is_exported: true,
+                                      captures: Vec::new(),
+                                      decorators: Vec::new(),
+                                      scope_capture_analysis: None,
+                                  };
+
+                                  // Register return type for call-site inference
+                                  if !matches!(func.return_type, Type::Any) {
+                                      ctx.register_func_return_type(func.name.clone(), func.return_type.clone());
+                                  }
+                                  if let Some((module, class)) = native_instance_from_return_type(&func.return_type) {
+                                      ctx.func_return_native_instances.push((
+                                          func.name.clone(), module.to_string(), class.to_string()
+                                      ));
+                                  }
+
+                                  // Store parameter defaults for call-site resolution
+                                  let defaults: Vec<Option<Expr>> = func.params.iter().map(|p| p.default.clone()).collect();
+                                  let param_ids: Vec<LocalId> = func.params.iter().map(|p| p.id).collect();
+                                  ctx.func_defaults.push((func.id, defaults, param_ids));
+
+                                  let func_name = func.name.clone();
+                                  let func_id = func.id;
+                                  module.functions.push(func);
+
+                                  // Track in exports
+                                  module.exports.push(Export::Named {
+                                      local: func_name.clone(),
+                                      exported: func_name.clone(),
+                                  });
+
+                                  // Track exported function for cross-module value passing
+                                  module.exported_functions.push((func_name, func_id));
+
+                                  continue;
+                              }
                             }
 
                             let expr = lower_expr(ctx, init)?;

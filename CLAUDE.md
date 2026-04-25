@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.144
+**Current Version:** 0.5.145
 
 ## TypeScript Parity Status
 
@@ -161,6 +161,8 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 ## Recent Changes
 
 Keep entries to 1-2 lines max. Full details in CHANGELOG.md.
+
+- **v0.5.145** — Fix exported arrow functions returning NaN at runtime. Root cause: `export const fn = () => {}` was lowered to a closure stored in a global, but the getter function returned the uninitialized global (0.0). Now intercept exported arrow functions in `lower_module_decl` and convert to normal function declarations, routing through the same path as `export function` declarations. Arrow parameters (Vec<Pat>) and body (expression or block) are properly lowered, with parameter defaults and return types extracted and registered for call-site inference.
 
 - **v0.5.144** — Fix closure variable capture via scope objects + inline transform bug. (1) Inline transform was skipping functions returning closures with `enclosing_func_id: Some(_)` due to pattern matching on `enclosing_func_id: None` only; removed the constraint so any closure capturing parameters prevents inlining. (2) Let statement codegen now writes captured variables to scope objects during initialization, ensuring nested closures can read values from peers (e.g., return closure calling multiple captured closures). Scope object architecture now fully functional: variables are allocated once per scope, captured closures receive pointers at creation time, closure bodies read from shared scope objects ensuring single source of truth for mutable captures.
 
