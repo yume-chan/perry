@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.146
+**Current Version:** 0.5.147
 
 ## TypeScript Parity Status
 
@@ -161,6 +161,8 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 ## Recent Changes
 
 Keep entries to 1-2 lines max. Full details in CHANGELOG.md.
+
+- **v0.5.147** — Fix var re-declaration shadowing of parameters and prior variables. Root cause: when `var b;` re-declares a parameter `b`, the HIR correctly reused the same LocalId, but codegen unconditionally created a new alloca for every Let statement. Now check if the LocalId already has a slot in `ctx.locals` (from parameter registration) and reuse it instead of creating a new alloca. This fixes cases like `function a(b) { var b; console.log(b); }` to correctly output the parameter value instead of undefined. LLVM IR now has a single alloca per local, eliminating the multiple-variable-same-id bug that was causing wrong memory reads.
 
 - **v0.5.146** — Fix unnecessary scope object allocation when no closures exist. Root cause: capture analysis marked ALL variable accesses as "captured" even when no closures existed in the function. Now `inside_closure: bool` flag in CaptureAnalyzer tracks when walking inside closure bodies; variables are only marked captured if accessed inside a closure. Non-closure scopes generate no scope object allocations, and code paths with no closures whatsoever (e.g. `not-closure.ts`) have zero scope overhead. Verified: no `js_scope_object_alloc` calls generated when closures absent. Lazy allocation still applies: root scopes allocated at entry, nested scopes on first access only.
 

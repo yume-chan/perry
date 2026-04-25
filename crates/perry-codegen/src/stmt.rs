@@ -403,17 +403,30 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
             // failures the moment a closure in another branch captures
             // this local, because the alloca block doesn't dominate the
             // closure-capture site.
-            let slot = ctx.func.alloca_entry(DOUBLE);
-            // Initialize to TAG_UNDEFINED so that if a try/catch path
-            // skips the real init, reads from this slot produce undefined
-            // (which runtime functions handle safely) rather than 0.0
-            // (which looks like a null pointer when NaN-unboxed).
-            {
-                let undef = crate::nanbox::double_literal(f64::from_bits(
-                    crate::nanbox::TAG_UNDEFINED,
-                ));
-                ctx.func.entry_allocas_push_store(DOUBLE, &undef, &slot);
-            }
+            //
+            // Check if this local already exists (e.g., var re-declaration
+            // of a parameter or prior variable). If so, reuse the existing
+            // slot instead of creating a new one. This handles cases like:
+            //   function a(b: string) {
+            //       var b;  // Re-declares parameter b
+            //       console.log(b);  // Should log the parameter value
+            //   }
+            let slot = if let Some(existing_slot) = ctx.locals.get(id) {
+                existing_slot.clone()
+            } else {
+                let new_slot = ctx.func.alloca_entry(DOUBLE);
+                // Initialize to TAG_UNDEFINED so that if a try/catch path
+                // skips the real init, reads from this slot produce undefined
+                // (which runtime functions handle safely) rather than 0.0
+                // (which looks like a null pointer when NaN-unboxed).
+                {
+                    let undef = crate::nanbox::double_literal(f64::from_bits(
+                        crate::nanbox::TAG_UNDEFINED,
+                    ));
+                    ctx.func.entry_allocas_push_store(DOUBLE, &undef, &new_slot);
+                }
+                new_slot
+            };
             ctx.locals.insert(*id, slot.clone());
             ctx.local_types.insert(*id, refined_ty);
             // Int32 specialization (issue #48): if this local qualifies as
