@@ -678,11 +678,6 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         // functions read their own params/lets, and any function read
         // module-scope `let`s (the ones in `hir.init` at top level).
         Expr::LocalGet(id) => {
-            eprintln!("[LOCAL_GET_START] id={}, in_closure_captures={}, in_scope_capture_analysis={}", 
-                id, 
-                ctx.closure_captures.contains_key(id),
-                ctx.scope_capture_analysis.is_some());
-            
             // NEW SYSTEM: Scope object local (captured variable): Read from scope object
             // Check this FIRST to use the new scope object system for closure captures
             if let Some(analysis) = &ctx.scope_capture_analysis {

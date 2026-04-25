@@ -1758,14 +1758,7 @@ fn compile_function(
     // Phase 3: Initialize scope objects for closures if present
     let has_analysis = f.scope_capture_analysis.is_some();
     if has_analysis {
-        if let Some(analysis) = &f.scope_capture_analysis {
-            eprintln!("[COMPILE_FUNCTION] Function '{}' scope_capture_analysis:", f.name);
-            for (scope_id, scope_ctx) in &analysis.scopes {
-                eprintln!("  {} has {} all_variables, {} captured_variables", scope_id, scope_ctx.all_variables.len(), scope_ctx.captured_variables.len());
-            }
-        }
-    } else {
-        eprintln!("[COMPILE_FUNCTION] Function '{}' has NO scope_capture_analysis", f.name);
+        // scope_capture_analysis is populated
     }
     scope_objects::initialize_scope_objects(&mut ctx)?;
     
