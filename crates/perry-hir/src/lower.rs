@@ -1239,7 +1239,6 @@ pub fn lower_module_with_class_id_and_types(ast_module: &ast::Module, name: &str
 
     // Pre-register module-level variable declarations so function bodies
     // declared before the variable can still reference them via lookup_local
-    eprintln!("[MODULE_PRE_REG] Starting pre-registration");
     let pre_reg_count_start = ctx.locals.len();
     for item in &ast_module.body {
         let var_decl = match item {
@@ -1268,7 +1267,6 @@ pub fn lower_module_with_class_id_and_types(ast_module: &ast::Module, name: &str
             }
         }
     }
-    eprintln!("[MODULE_PRE_REG] Completed: locals.len went from {} to {}", pre_reg_count_start, ctx.locals.len());
 
     // Pre-register all class declarations so that static method calls between
     // classes declared in the same file resolve correctly regardless of declaration order.
@@ -2441,16 +2439,13 @@ fn collect_closure_assigned_in_body_expr(expr: &Expr, out: &mut std::collections
 fn populate_enclosing_scope_capture_analysis(module: &mut Module) {
     use std::collections::HashMap;
     
-    eprintln!("[DEBUG] populate_enclosing_scope_capture_analysis: starting pass");
     
     // Build a map from FuncId -> Function so we can look up enclosing functions
     let mut func_map: HashMap<FuncId, *const Function> = HashMap::new();
     for func in &module.functions {
         func_map.insert(func.id, func as *const Function);
-        eprintln!("[DEBUG] - Function {:?}: {:?} scopes", func.id, func.scope_capture_analysis.as_ref().map(|a| a.scopes.len()).unwrap_or(0));
     }
     
-    eprintln!("[DEBUG] Function count: {}", module.functions.len());
     
     // For each function, walk its body and populate closures' enclosing_scope_capture_analysis
     for func in &mut module.functions {
@@ -2470,7 +2465,6 @@ fn populate_enclosing_scope_capture_analysis(module: &mut Module) {
         }
     }
     
-    eprintln!("[DEBUG] populate_enclosing_scope_capture_analysis: pass complete");
 }
 
 fn populate_closures_in_stmts(stmts: &mut [Stmt], func_map: &std::collections::HashMap<FuncId, *const Function>) {
@@ -2525,7 +2519,6 @@ fn populate_closures_in_stmt(stmt: &mut Stmt, func_map: &std::collections::HashM
 fn populate_closures_in_expr(expr: &mut Expr, func_map: &std::collections::HashMap<FuncId, *const Function>) {
     match expr {
         Expr::Closure { ref mut enclosing_scope_capture_analysis, enclosing_func_id, body, .. } => {
-            eprintln!("[DEBUG] Found closure with enclosing_func_id={:?}", enclosing_func_id);
             // If this closure has an enclosing function, look it up and copy its scope_capture_analysis
             if let Some(enclosing_fid) = enclosing_func_id {
                 if let Some(&func_ptr) = func_map.get(enclosing_fid) {
@@ -2533,17 +2526,13 @@ fn populate_closures_in_expr(expr: &mut Expr, func_map: &std::collections::HashM
                         let func_ref = &*func_ptr;
                         // Clone the enclosing function's scope_capture_analysis for this closure
                         if let Some(ref analysis) = func_ref.scope_capture_analysis {
-                            eprintln!("[DEBUG] Populating closure: found enclosing analysis with {} scopes", analysis.scopes.len());
                             *enclosing_scope_capture_analysis = Some(Box::new(analysis.as_ref().clone()));
                         } else {
-                            eprintln!("[DEBUG] Populating closure: enclosing function has NO analysis");
                         }
                     }
                 } else {
-                    eprintln!("[DEBUG] Populating closure: enclosing function not found in map");
                 }
             } else {
-                eprintln!("[DEBUG] Closure has no enclosing function (enclosing_func_id is None)");
             }
             
             // Recurse into the closure body to process any nested closures
