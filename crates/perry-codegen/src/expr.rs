@@ -678,34 +678,13 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         // functions read their own params/lets, and any function read
         // module-scope `let`s (the ones in `hir.init` at top level).
         Expr::LocalGet(id) => {
-            // Captured by closure (from outer scope):
-            if let Some(&capture_idx) = ctx.closure_captures.get(id) {
-                let closure_ptr = ctx
-                    .current_closure_ptr
-                    .clone()
-                    .ok_or_else(|| anyhow!("captured local but no current_closure_ptr"))?;
-                let idx_str = capture_idx.to_string();
-                // If the captured id is a boxed var, the capture
-                // slot holds a raw box pointer (as a bit-castable
-                // double). Read the capture, extract the box
-                // pointer, and deref via js_box_get.
-                if ctx.boxed_vars.contains(id) {
-                    let blk = ctx.block();
-                    let cap_dbl = blk.call(
-                        DOUBLE,
-                        "js_closure_get_capture_f64",
-                        &[(I64, &closure_ptr), (I32, &idx_str)],
-                    );
-                    let box_ptr = blk.bitcast_double_to_i64(&cap_dbl);
-                    return Ok(blk.call(DOUBLE, "js_box_get", &[(I64, &box_ptr)]));
-                }
-                return Ok(ctx.block().call(
-                    DOUBLE,
-                    "js_closure_get_capture_f64",
-                    &[(I64, &closure_ptr), (I32, &capture_idx.to_string())],
-                ));
-            }
-            // Scope object local (captured variable): Read from scope object
+            eprintln!("[LOCAL_GET_START] id={}, in_closure_captures={}, in_scope_capture_analysis={}", 
+                id, 
+                ctx.closure_captures.contains_key(id),
+                ctx.scope_capture_analysis.is_some());
+            
+            // NEW SYSTEM: Scope object local (captured variable): Read from scope object
+            // Check this FIRST to use the new scope object system for closure captures
             if let Some(analysis) = &ctx.scope_capture_analysis {
                 if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
                     // Inside a closure body: get the scope pointer from the closure's captures
@@ -740,6 +719,34 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         }
                     }
                 }
+            }
+            
+            // OLD SYSTEM: Captured by closure (from outer scope) - FALLBACK if scope objects don't apply
+            if let Some(&capture_idx) = ctx.closure_captures.get(id) {
+                let closure_ptr = ctx
+                    .current_closure_ptr
+                    .clone()
+                    .ok_or_else(|| anyhow!("captured local but no current_closure_ptr"))?;
+                let idx_str = capture_idx.to_string();
+                // If the captured id is a boxed var, the capture
+                // slot holds a raw box pointer (as a bit-castable
+                // double). Read the capture, extract the box
+                // pointer, and deref via js_box_get.
+                if ctx.boxed_vars.contains(id) {
+                    let blk = ctx.block();
+                    let cap_dbl = blk.call(
+                        DOUBLE,
+                        "js_closure_get_capture_f64",
+                        &[(I64, &closure_ptr), (I32, &idx_str)],
+                    );
+                    let box_ptr = blk.bitcast_double_to_i64(&cap_dbl);
+                    return Ok(blk.call(DOUBLE, "js_box_get", &[(I64, &box_ptr)]));
+                }
+                return Ok(ctx.block().call(
+                    DOUBLE,
+                    "js_closure_get_capture_f64",
+                    &[(I64, &closure_ptr), (I32, &capture_idx.to_string())],
+                ));
             }
             // Boxed local in enclosing function: load the slot (box
             // pointer), deref via js_box_get.
@@ -3076,10 +3083,11 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // Now load the scope pointers (can mutable borrow ctx now that analysis borrow is released)
             if !scopes_to_load.is_empty() {
                 use_scope_objects = true;
-                for (_, scope_ptr_slot) in scopes_to_load.iter() {
+                for (scope_id, scope_ptr_slot) in scopes_to_load.iter() {
                     let scope_ptr = ctx.block().load(crate::types::I64, scope_ptr_slot);
                     captured_values.push(scope_ptr);
                 }
+            } else {
             }
             
             // Fallback: old js_box approach

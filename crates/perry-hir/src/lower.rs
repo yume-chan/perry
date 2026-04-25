@@ -338,6 +338,7 @@ impl LoweringContext {
                     captures_this: false,
                     enclosing_class: None,
                     is_async: false,
+                    enclosing_scope_capture_analysis: None,
                     scope_capture_analysis: None,
                 };
             }
@@ -1419,6 +1420,11 @@ pub fn lower_module_with_class_id_and_types(ast_module: &ast::Module, name: &str
         }
     }
 
+    // Post-lowering pass: populate enclosing_scope_capture_analysis for all closures
+    // This allows the codegen phase to access the enclosing function's scope object data
+    // when lowering the closure body
+    populate_enclosing_scope_capture_analysis(&mut module);
+
     Ok((module, ctx.next_class_id))
 }
 
@@ -2428,6 +2434,285 @@ fn collect_closure_assigned_in_body_expr(expr: &Expr, out: &mut std::collections
         _ => {}
     }
 }
+
+/// Post-lowering pass: populate enclosing_scope_capture_analysis for all closures.
+/// This ensures that when the codegen phase compiles the closure body, it can look up
+/// which scope each captured variable belongs to and where to access it from scope objects.
+fn populate_enclosing_scope_capture_analysis(module: &mut Module) {
+    use std::collections::HashMap;
+    
+    eprintln!("[DEBUG] populate_enclosing_scope_capture_analysis: starting pass");
+    
+    // Build a map from FuncId -> Function so we can look up enclosing functions
+    let mut func_map: HashMap<FuncId, *const Function> = HashMap::new();
+    for func in &module.functions {
+        func_map.insert(func.id, func as *const Function);
+        eprintln!("[DEBUG] - Function {:?}: {:?} scopes", func.id, func.scope_capture_analysis.as_ref().map(|a| a.scopes.len()).unwrap_or(0));
+    }
+    
+    eprintln!("[DEBUG] Function count: {}", module.functions.len());
+    
+    // For each function, walk its body and populate closures' enclosing_scope_capture_analysis
+    for func in &mut module.functions {
+        populate_closures_in_stmts(&mut func.body, &func_map);
+    }
+    
+    // Also process class methods
+    for class in &mut module.classes {
+        for method in &mut class.methods {
+            populate_closures_in_stmts(&mut method.body, &func_map);
+        }
+        for static_method in &mut class.static_methods {
+            populate_closures_in_stmts(&mut static_method.body, &func_map);
+        }
+        if let Some(ref mut ctor) = class.constructor {
+            populate_closures_in_stmts(&mut ctor.body, &func_map);
+        }
+    }
+    
+    eprintln!("[DEBUG] populate_enclosing_scope_capture_analysis: pass complete");
+}
+
+fn populate_closures_in_stmts(stmts: &mut [Stmt], func_map: &std::collections::HashMap<FuncId, *const Function>) {
+    for stmt in stmts {
+        populate_closures_in_stmt(stmt, func_map);
+    }
+}
+
+fn populate_closures_in_stmt(stmt: &mut Stmt, func_map: &std::collections::HashMap<FuncId, *const Function>) {
+    match stmt {
+        Stmt::Let { init: Some(expr), .. } => populate_closures_in_expr(expr, func_map),
+        Stmt::Expr(expr) => populate_closures_in_expr(expr, func_map),
+        Stmt::Return(Some(expr)) => populate_closures_in_expr(expr, func_map),
+        Stmt::Throw(expr) => populate_closures_in_expr(expr, func_map),
+        Stmt::If { condition, then_branch, else_branch } => {
+            populate_closures_in_expr(condition, func_map);
+            populate_closures_in_stmts(then_branch, func_map);
+            if let Some(else_stmts) = else_branch {
+                populate_closures_in_stmts(else_stmts, func_map);
+            }
+        }
+        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+            populate_closures_in_expr(condition, func_map);
+            populate_closures_in_stmts(body, func_map);
+        }
+        Stmt::For { init, condition, update, body } => {
+            if let Some(init_stmt) = init {
+                populate_closures_in_stmt(init_stmt, func_map);
+            }
+            if let Some(e) = condition {
+                populate_closures_in_expr(e, func_map);
+            }
+            if let Some(e) = update {
+                populate_closures_in_expr(e, func_map);
+            }
+            populate_closures_in_stmts(body, func_map);
+        }
+        Stmt::Try { body, catch, finally } => {
+            populate_closures_in_stmts(body, func_map);
+            if let Some(catch_clause) = catch {
+                populate_closures_in_stmts(&mut catch_clause.body, func_map);
+            }
+            if let Some(finally_stmts) = finally {
+                populate_closures_in_stmts(finally_stmts, func_map);
+            }
+        }
+        Stmt::Labeled { body, .. } => populate_closures_in_stmt(body, func_map),
+        _ => {}
+    }
+}
+
+fn populate_closures_in_expr(expr: &mut Expr, func_map: &std::collections::HashMap<FuncId, *const Function>) {
+    match expr {
+        Expr::Closure { ref mut enclosing_scope_capture_analysis, enclosing_func_id, body, .. } => {
+            eprintln!("[DEBUG] Found closure with enclosing_func_id={:?}", enclosing_func_id);
+            // If this closure has an enclosing function, look it up and copy its scope_capture_analysis
+            if let Some(enclosing_fid) = enclosing_func_id {
+                if let Some(&func_ptr) = func_map.get(enclosing_fid) {
+                    unsafe {
+                        let func_ref = &*func_ptr;
+                        // Clone the enclosing function's scope_capture_analysis for this closure
+                        if let Some(ref analysis) = func_ref.scope_capture_analysis {
+                            eprintln!("[DEBUG] Populating closure: found enclosing analysis with {} scopes", analysis.scopes.len());
+                            *enclosing_scope_capture_analysis = Some(Box::new(analysis.as_ref().clone()));
+                        } else {
+                            eprintln!("[DEBUG] Populating closure: enclosing function has NO analysis");
+                        }
+                    }
+                } else {
+                    eprintln!("[DEBUG] Populating closure: enclosing function not found in map");
+                }
+            } else {
+                eprintln!("[DEBUG] Closure has no enclosing function (enclosing_func_id is None)");
+            }
+            
+            // Recurse into the closure body to process any nested closures
+            populate_closures_in_stmts(body, func_map);
+        }
+        Expr::Binary { left, right, .. }
+        | Expr::Compare { left, right, .. }
+        | Expr::Logical { left, right, .. } => {
+            populate_closures_in_expr(left, func_map);
+            populate_closures_in_expr(right, func_map);
+        }
+        Expr::Unary { operand, .. } => populate_closures_in_expr(operand, func_map),
+        Expr::Call { callee, args, .. } => {
+            populate_closures_in_expr(callee, func_map);
+            for arg in args {
+                populate_closures_in_expr(arg, func_map);
+            }
+        }
+        Expr::CallSpread { callee, args, .. } => {
+            populate_closures_in_expr(callee, func_map);
+            for arg in args {
+                match arg {
+                    CallArg::Expr(e) | CallArg::Spread(e) => populate_closures_in_expr(e, func_map),
+                }
+            }
+        }
+        Expr::Array(elements) => {
+            for e in elements {
+                populate_closures_in_expr(e, func_map);
+            }
+        }
+        Expr::ArraySpread(elements) => {
+            for e in elements {
+                match e {
+                    ArrayElement::Expr(x) | ArrayElement::Spread(x) => populate_closures_in_expr(x, func_map),
+                }
+            }
+        }
+        Expr::Object(fields) => {
+            for (_, v) in fields {
+                populate_closures_in_expr(v, func_map);
+            }
+        }
+        Expr::ObjectSpread { parts } => {
+            for (_, v) in parts {
+                populate_closures_in_expr(v, func_map);
+            }
+        }
+        Expr::Conditional { condition, then_expr, else_expr } => {
+            populate_closures_in_expr(condition, func_map);
+            populate_closures_in_expr(then_expr, func_map);
+            populate_closures_in_expr(else_expr, func_map);
+        }
+        Expr::PropertyGet { object, .. } => populate_closures_in_expr(object, func_map),
+        Expr::PropertySet { object, value, .. } => {
+            populate_closures_in_expr(object, func_map);
+            populate_closures_in_expr(value, func_map);
+        }
+        Expr::PropertyUpdate { object, .. } => populate_closures_in_expr(object, func_map),
+        Expr::IndexGet { object, index } => {
+            populate_closures_in_expr(object, func_map);
+            populate_closures_in_expr(index, func_map);
+        }
+        Expr::IndexSet { object, index, value } => {
+            populate_closures_in_expr(object, func_map);
+            populate_closures_in_expr(index, func_map);
+            populate_closures_in_expr(value, func_map);
+        }
+        Expr::IndexUpdate { object, index, .. } => {
+            populate_closures_in_expr(object, func_map);
+            populate_closures_in_expr(index, func_map);
+        }
+        Expr::New { args, .. } => {
+            for arg in args {
+                populate_closures_in_expr(arg, func_map);
+            }
+        }
+        Expr::NewDynamic { callee, args } => {
+            populate_closures_in_expr(callee, func_map);
+            for arg in args {
+                populate_closures_in_expr(arg, func_map);
+            }
+        }
+        Expr::LocalSet(_, value) | Expr::GlobalSet(_, value) => {
+            populate_closures_in_expr(value, func_map);
+        }
+        Expr::Await(inner) | Expr::TypeOf(inner) | Expr::Void(inner) | Expr::Delete(inner) => {
+            populate_closures_in_expr(inner, func_map);
+        }
+        Expr::InstanceOf { expr, .. } => populate_closures_in_expr(expr, func_map),
+        Expr::In { property, object } => {
+            populate_closures_in_expr(property, func_map);
+            populate_closures_in_expr(object, func_map);
+        }
+        Expr::Sequence(exprs) => {
+            for e in exprs {
+                populate_closures_in_expr(e, func_map);
+            }
+        }
+        Expr::ArrayForEach { array, callback }
+        | Expr::ArrayMap { array, callback }
+        | Expr::ArrayFilter { array, callback }
+        | Expr::ArrayFind { array, callback }
+        | Expr::ArrayFindIndex { array, callback }
+        | Expr::ArraySome { array, callback }
+        | Expr::ArrayEvery { array, callback }
+        | Expr::ArrayFlatMap { array, callback } => {
+            populate_closures_in_expr(array, func_map);
+            populate_closures_in_expr(callback, func_map);
+        }
+        Expr::ArraySort { array, comparator } => {
+            populate_closures_in_expr(array, func_map);
+            populate_closures_in_expr(comparator, func_map);
+        }
+        Expr::ArrayReduce { array, callback, initial } | Expr::ArrayReduceRight { array, callback, initial } => {
+            populate_closures_in_expr(array, func_map);
+            populate_closures_in_expr(callback, func_map);
+            if let Some(init) = initial {
+                populate_closures_in_expr(init, func_map);
+            }
+        }
+        Expr::ArrayToReversed { array } => {
+            populate_closures_in_expr(array, func_map);
+        }
+        Expr::ArrayToSorted { array, comparator } => {
+            populate_closures_in_expr(array, func_map);
+            if let Some(cmp) = comparator {
+                populate_closures_in_expr(cmp, func_map);
+            }
+        }
+        Expr::ArrayToSpliced { array, start, delete_count, items } => {
+            populate_closures_in_expr(array, func_map);
+            populate_closures_in_expr(start, func_map);
+            populate_closures_in_expr(delete_count, func_map);
+            for item in items {
+                populate_closures_in_expr(item, func_map);
+            }
+        }
+        Expr::ArrayWith { array, index, value } => {
+            populate_closures_in_expr(array, func_map);
+            populate_closures_in_expr(index, func_map);
+            populate_closures_in_expr(value, func_map);
+        }
+        Expr::ArrayCopyWithin { target, start, end, .. } => {
+            populate_closures_in_expr(target, func_map);
+            populate_closures_in_expr(start, func_map);
+            if let Some(e) = end {
+                populate_closures_in_expr(e, func_map);
+            }
+        }
+        Expr::ArrayEntries(array) | Expr::ArrayKeys(array) | Expr::ArrayValues(array) => {
+            populate_closures_in_expr(array, func_map);
+        }
+        Expr::NativeMethodCall { object, args, .. } => {
+            if let Some(obj) = object {
+                populate_closures_in_expr(obj, func_map);
+            }
+            for arg in args {
+                populate_closures_in_expr(arg, func_map);
+            }
+        }
+        Expr::JsCreateCallback { closure, .. } => populate_closures_in_expr(closure, func_map),
+        Expr::ArrayPush { value, .. } | Expr::ArrayPushSpread { source: value, .. } => {
+            populate_closures_in_expr(value, func_map);
+        }
+        _ => {}
+    }
+}
+
 
 fn lower_module_decl(
     ctx: &mut LoweringContext,
@@ -9889,6 +10174,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                                         captures_this,
                                         enclosing_class,
                                         is_async: method.function.is_async,
+                                        enclosing_scope_capture_analysis: None,
                                         scope_capture_analysis: None,
                                     }
                                 };
@@ -10003,7 +10289,8 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                 captures_this: false,
                 enclosing_class: None,
                 is_async: false,
-                    scope_capture_analysis: None,
+                enclosing_scope_capture_analysis: None,
+                scope_capture_analysis: None,
             };
             Ok(Expr::Call {
                 callee: Box::new(closure),
@@ -10532,6 +10819,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                 captures_this,
                 enclosing_class,
                 is_async: arrow.is_async,
+                enclosing_scope_capture_analysis: None,
                 scope_capture_analysis: Some(Box::new(capture_analysis)),
             })
         }
@@ -10682,6 +10970,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                 captures_this,
                 enclosing_class: None,
                 is_async: fn_expr.function.is_async,
+                enclosing_scope_capture_analysis: None,
                 scope_capture_analysis: Some(Box::new(capture_analysis)),
             })
         }
@@ -11344,6 +11633,7 @@ fn try_desugar_reactive_text(
             captures_this: false,
             enclosing_class: None,
             is_async: false,
+                    enclosing_scope_capture_analysis: None,
                     scope_capture_analysis: None,
         };
 
@@ -11382,6 +11672,7 @@ fn try_desugar_reactive_text(
         captures_this: false,
         enclosing_class: None,
         is_async: false,
+                    enclosing_scope_capture_analysis: None,
                     scope_capture_analysis: None,
     };
 
@@ -11600,6 +11891,7 @@ fn try_desugar_reactive_animate(
             captures_this: false,
             enclosing_class: None,
             is_async: false,
+                    enclosing_scope_capture_analysis: None,
                     scope_capture_analysis: None,
         };
 
@@ -11638,6 +11930,7 @@ fn try_desugar_reactive_animate(
         captures_this: false,
         enclosing_class: None,
         is_async: false,
+                    enclosing_scope_capture_analysis: None,
                     scope_capture_analysis: None,
     };
 

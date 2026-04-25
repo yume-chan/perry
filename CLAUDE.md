@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.143
+**Current Version:** 0.5.144
 
 ## TypeScript Parity Status
 
@@ -161,6 +161,8 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 ## Recent Changes
 
 Keep entries to 1-2 lines max. Full details in CHANGELOG.md.
+
+- **v0.5.144** — Fix closure variable capture via scope objects + inline transform bug. (1) Inline transform was skipping functions returning closures with `enclosing_func_id: Some(_)` due to pattern matching on `enclosing_func_id: None` only; removed the constraint so any closure capturing parameters prevents inlining. (2) Let statement codegen now writes captured variables to scope objects during initialization, ensuring nested closures can read values from peers (e.g., return closure calling multiple captured closures). Scope object architecture now fully functional: variables are allocated once per scope, captured closures receive pointers at creation time, closure bodies read from shared scope objects ensuring single source of truth for mutable captures.
 
 - **v0.5.143** — Fix namespace var duplicate initialization causing "redefinition of global" LLVM errors in tsc.ts compilation. Root cause: namespace-internal vars were pre-registered at MODULE level in first pass, then lowered again in second pass via `lower_stmt`, creating two Let statements with same LocalId in module.init. Solution: collect namespace var names in a separate pre-pass BEFORE lowering functions, register them in `ctx.locals` so functions can reference them, mark in `pre_registered_module_vars` set, then skip duplicate pre-registration in first pass. `lower_var_decl_with_destructuring` reuses the pre-registered LocalIds when lowering. This ensures single source of truth for each namespace var while maintaining function access to namespace scope.
 

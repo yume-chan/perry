@@ -664,6 +664,7 @@ fn transform_generator_function(func: &mut Function, next_local_id: &mut u32, ne
         captures_this: false,
         enclosing_class: None,
         is_async: false,
+        enclosing_scope_capture_analysis: None,
         scope_capture_analysis: None,
     };
 
@@ -688,6 +689,7 @@ fn transform_generator_function(func: &mut Function, next_local_id: &mut u32, ne
         captures_this: false,
         enclosing_class: None,
         is_async: false,
+        enclosing_scope_capture_analysis: None,
         scope_capture_analysis: None,
     };
 
@@ -737,6 +739,7 @@ fn transform_generator_function(func: &mut Function, next_local_id: &mut u32, ne
         captures_this: false,
         enclosing_class: None,
         is_async: false,
+        enclosing_scope_capture_analysis: None,
         scope_capture_analysis: None,
     };
 

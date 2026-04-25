@@ -1758,6 +1758,17 @@ fn compile_function(
     };
     
     // Phase 3: Initialize scope objects for closures if present
+    let has_analysis = f.scope_capture_analysis.is_some();
+    if has_analysis {
+        if let Some(analysis) = &f.scope_capture_analysis {
+            eprintln!("[COMPILE_FUNCTION] Function '{}' scope_capture_analysis:", f.name);
+            for (scope_id, scope_ctx) in &analysis.scopes {
+                eprintln!("  {} has {} all_variables, {} captured_variables", scope_id, scope_ctx.all_variables.len(), scope_ctx.captured_variables.len());
+            }
+        }
+    } else {
+        eprintln!("[COMPILE_FUNCTION] Function '{}' has NO scope_capture_analysis", f.name);
+    }
     scope_objects::initialize_scope_objects(&mut ctx)?;
     
     stmt::lower_stmts(&mut ctx, &f.body)
@@ -1835,16 +1846,17 @@ fn compile_closure(
     
     // Destructure the closure expression. We trust that the caller
     // passes only `Expr::Closure` here (from `collect_closures_*`).
-    let (params, body, captures, captures_this, enclosing_class, scope_capture_analysis) = match closure_expr {
+    let (params, body, captures, captures_this, enclosing_class, enclosing_scope_capture_analysis, scope_capture_analysis) = match closure_expr {
         perry_hir::Expr::Closure {
             params,
             body,
             captures,
             captures_this,
             enclosing_class,
+            enclosing_scope_capture_analysis,
             scope_capture_analysis,
             ..
-        } => (params, body, captures, *captures_this, enclosing_class.clone(), scope_capture_analysis.clone()),
+        } => (params, body, captures, *captures_this, enclosing_class.clone(), enclosing_scope_capture_analysis.clone(), scope_capture_analysis.clone()),
         _ => return Err(anyhow!("compile_closure: expected Expr::Closure")),
     };
 
@@ -2042,7 +2054,7 @@ fn compile_closure(
         buffer_data_slots: HashMap::new(),
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
-        scope_capture_analysis,
+        scope_capture_analysis: enclosing_scope_capture_analysis,
         closure_auto_captures_cache: HashMap::new(),
         closure_scope_indices: HashMap::new(),
     };
@@ -2058,8 +2070,9 @@ fn compile_closure(
         let mut scopes_used: std::collections::BTreeMap<perry_hir::ScopeId, ()> = 
             std::collections::BTreeMap::new();
         for cap_id in &auto_captures {
-            if let Some((scope_id, _)) = crate::scope_objects::get_scope_and_index(*cap_id, analysis) {
+            if let Some((scope_id, var_idx)) = crate::scope_objects::get_scope_and_index(*cap_id, analysis) {
                 scopes_used.insert(scope_id, ());
+            } else {
             }
         }
         
@@ -2067,6 +2080,7 @@ fn compile_closure(
         for (idx, scope_id) in scopes_used.keys().enumerate() {
             ctx.closure_scope_indices.insert(*scope_id, idx);
         }
+    } else {
     }
 
     stmt::lower_stmts(&mut ctx, body)

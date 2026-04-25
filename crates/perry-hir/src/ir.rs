@@ -1580,7 +1580,9 @@ pub enum Expr {
         enclosing_class: Option<String>,
         /// Whether this is an async closure
         is_async: bool,
-        /// Scope object capture analysis (populated after analysis pass)
+        /// Scope object capture analysis for the ENCLOSING function (to know where captures come from)
+        enclosing_scope_capture_analysis: Option<Box<CaptureAnalysis>>,
+        /// Scope object capture analysis (populated after analysis pass, for nested closures inside this closure)
         scope_capture_analysis: Option<Box<CaptureAnalysis>>,
     },
 

@@ -1304,7 +1304,7 @@ fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Type>) -> Expr {
         ),
 
         // Closure
-        Expr::Closure { func_id, params, return_type, body, captures, mutable_captures, captures_this, enclosing_class, is_async, scope_capture_analysis, enclosing_func_id } => {
+        Expr::Closure { func_id, params, return_type, body, captures, mutable_captures, captures_this, enclosing_class, is_async, scope_capture_analysis, enclosing_scope_capture_analysis, enclosing_func_id } => {
             Expr::Closure {
                 func_id: *func_id,
                 params: params.iter().map(|p| Param {
@@ -1321,6 +1321,7 @@ fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Type>) -> Expr {
                 captures_this: *captures_this,
                 enclosing_class: enclosing_class.clone(),
                 is_async: *is_async,
+                enclosing_scope_capture_analysis: enclosing_scope_capture_analysis.clone(),
                 scope_capture_analysis: scope_capture_analysis.clone(),
                 enclosing_func_id: *enclosing_func_id,
             }

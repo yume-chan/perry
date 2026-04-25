@@ -2266,6 +2266,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                     captures_this: false,
                     enclosing_class: None,
                     is_async: fn_decl.function.is_async,
+                    enclosing_scope_capture_analysis: None,
                     scope_capture_analysis: Some(Box::new(closure_capture_analysis)),
                 };
                 result.push(Stmt::Let {

@@ -115,6 +115,7 @@ impl CaptureAnalyzer {
     fn mark_variable_captured(&mut self, var_id: LocalId) {
         if let Some(scope_id) = self.find_scope_for_variable(var_id) {
             if let Some(scope) = self.scopes.get_mut(&scope_id) {
+                eprintln!("[CAPTURE_ANALYSIS] Marking local {} as captured in {}", var_id, scope_id);
                 scope.mark_captured(var_id);
             }
         }
@@ -241,6 +242,7 @@ impl CaptureAnalyzer {
         // Generic tree walk that marks captured variables
         match expr {
             Expr::Closure { body, captures, .. } => {
+                eprintln!("[CAPTURE_ANALYSIS] Found closure with captures: {:?}", captures);
                 let mut closure_info = ClosureCaptureInfo::new();
                 for &var_id in captures {
                     self.mark_variable_captured(var_id);

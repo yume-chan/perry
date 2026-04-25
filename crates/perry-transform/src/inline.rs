@@ -299,8 +299,10 @@ fn body_contains_closure_capturing(stmts: &[Stmt], captured_ids: &std::collectio
     fn check_expr(expr: &Expr, captured_ids: &std::collections::HashSet<LocalId>) -> bool {
         match expr {
             Expr::Closure {
-                    enclosing_func_id: None, captures, body, .. } => {
+                    enclosing_func_id, captures, body, .. } => {
                 // Check if any capture is in the set of IDs we're looking for
+                // This check applies to BOTH closures with enclosing_func_id: None AND enclosing_func_id: Some(_)
+                // If a closure captures a parameter, it cannot be inlined regardless of where it was defined
                 for capture_id in captures {
                     if captured_ids.contains(capture_id) {
                         return true;

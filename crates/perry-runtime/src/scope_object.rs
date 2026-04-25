@@ -64,7 +64,8 @@ pub extern "C" fn js_scope_object_get_f64(scope_ptr: i64, index: i32) -> f64 {
         }
         
         let vars_ptr = &mut (*scope).vars as *mut f64;
-        *vars_ptr.add(index as usize)
+        let val = *vars_ptr.add(index as usize);
+        val
     }
 }
 

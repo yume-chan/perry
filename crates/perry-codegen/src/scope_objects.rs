@@ -23,12 +23,20 @@ use crate::types::I32;
 /// Each scope pointer is stored in an alloca (stack slot) and tracked in
 /// ctx.scope_ptrs so variable access can route through it.
 pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
+    let is_closure_body = ctx.current_closure_ptr.is_some();
+    
+    // If we're in a closure body, we don't allocate scope objects - they come from captures
+    if is_closure_body {
+        // For closure bodies, scope pointers are loaded from captures later by LocalGet
+        // We don't allocate anything here
+        return Ok(());
+    }
+    
     // Collect all information we need before any mutable ctx borrows
     let init_data: Vec<(ScopeId, usize, Vec<(usize, perry_types::LocalId)>)> = if let Some(analysis) = &ctx.scope_capture_analysis {
         let mut data = Vec::new();
         for (scope_id, scope_ctx) in &analysis.scopes {
             let var_count = scope_ctx.scope_object_var_count();
-            eprintln!("[SCOPE_OBJECTS] Scope {} has {} captured vars", scope_id, var_count);
             if var_count > 0 {
                 let mut captured_with_indices: Vec<(usize, perry_types::LocalId)> = scope_ctx.captured_variables
                     .iter()
@@ -38,10 +46,8 @@ pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
                 data.push((*scope_id, var_count, captured_with_indices));
             }
         }
-        eprintln!("[SCOPE_OBJECTS] Allocating {} scope objects", data.len());
         data
     } else {
-        eprintln!("[SCOPE_OBJECTS] No scope_capture_analysis available");
         Vec::new()
     };
     
@@ -66,7 +72,6 @@ pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
         
         // Now populate captured variables from this scope
         for (var_index, local_id) in captured_vars {
-            eprintln!("[SCOPE_OBJECTS] Initializing captured var {} (local {}) at index {}", var_index, local_id, var_index);
             
             // If this local is a parameter (has a stack slot), initialize its value in the scope object
             if let Some(param_slot) = ctx.locals.get(&local_id).cloned() {
@@ -77,6 +82,7 @@ pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
                     "js_scope_object_set_f64",
                     &[(crate::types::I64, &scope_ptr), (I32, &var_index_str), (crate::types::DOUBLE, &val)],
                 );
+            } else {
             }
         }
     }

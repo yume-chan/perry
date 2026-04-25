@@ -90,17 +90,22 @@ pub extern "C" fn js_closure_set_capture_f64(closure: *mut ClosureHeader, index:
 /// Get a captured value (as i64 pointer) by index
 #[no_mangle]
 pub extern "C" fn js_closure_get_capture_ptr(closure: *const ClosureHeader, index: u32) -> i64 {
-    if closure.is_null() { return 0; }
+    if closure.is_null() { 
+        return 0; 
+    }
     unsafe {
         let captures_ptr = (closure as *const u8).add(std::mem::size_of::<ClosureHeader>()) as *const i64;
-        *captures_ptr.add(index as usize)
+        let val = *captures_ptr.add(index as usize);
+        val
     }
 }
 
 /// Set a captured value (as i64 pointer) by index
 #[no_mangle]
 pub extern "C" fn js_closure_set_capture_ptr(closure: *mut ClosureHeader, index: u32, value: i64) {
-    if closure.is_null() { return; }
+    if closure.is_null() { 
+        return; 
+    }
     unsafe {
         let captures_ptr = (closure as *mut u8).add(std::mem::size_of::<ClosureHeader>()) as *mut i64;
         *captures_ptr.add(index as usize) = value;
