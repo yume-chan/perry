@@ -38,7 +38,7 @@ pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
         for (scope_id, scope_ctx) in &analysis.scopes {
             let var_count = scope_ctx.scope_object_var_count();
             if var_count > 0 {
-                let mut captured_with_indices: Vec<(usize, perry_types::LocalId)> = scope_ctx.captured_variables
+                let captured_with_indices: Vec<(usize, perry_types::LocalId)> = scope_ctx.captured_variables
                     .iter()
                     .enumerate()
                     .map(|(idx, local_id)| (idx, *local_id))

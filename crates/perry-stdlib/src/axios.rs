@@ -3,7 +3,7 @@
 //! Native implementation of the 'axios' npm package using reqwest.
 //! Provides HTTP client functionality with a promise-based API.
 
-use perry_runtime::{js_promise_new, js_string_from_bytes, JSValue, ObjectHeader, Promise, StringHeader};
+use perry_runtime::{js_promise_new, js_string_from_bytes, Promise, StringHeader};
 use crate::common::{register_handle, get_handle, spawn_for_promise, Handle};
 
 /// Helper to extract string from StringHeader pointer

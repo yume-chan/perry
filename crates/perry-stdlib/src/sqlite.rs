@@ -4,10 +4,10 @@
 //! Provides synchronous SQLite database operations.
 
 use perry_runtime::{
-    js_array_alloc, js_array_push, js_object_alloc, js_object_alloc_with_shape, js_object_set_field,
+    js_array_alloc, js_array_push, js_object_alloc_with_shape, js_object_set_field,
     js_string_from_bytes, ArrayHeader, JSValue, ObjectHeader, StringHeader,
 };
-use rusqlite::{Connection, params_from_iter, types::Value as SqliteValue};
+use rusqlite::{Connection, types::Value as SqliteValue};
 use std::sync::Mutex;
 use crate::common::{get_handle, register_handle, Handle};
 

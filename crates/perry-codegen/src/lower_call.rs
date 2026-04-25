@@ -37,7 +37,7 @@ fn is_integer_handle_arg(expr: &Expr) -> bool {
 use crate::lower_string_method::lower_string_method;
 use crate::nanbox::{double_literal, POINTER_MASK_I64};
 use crate::type_analysis::{is_array_expr, is_map_expr, is_promise_expr, is_set_expr, is_string_expr, receiver_class_name};
-use crate::types::{DOUBLE, I32, I64, I8, PTR, VOID};
+use crate::types::{DOUBLE, I32, I64, I8, PTR};
 
 /// Lower a `Call` expression. Two shapes are supported:
 /// 1. `FuncRef(id)(args...)` — direct call to a user function by HIR id.
@@ -358,7 +358,7 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
             .copied()
             .unwrap_or(args.len());
         let has_rest = ctx.imported_rest_funcs.contains(name.as_str());
-        let mut lowered: Vec<String> = if has_rest {
+        let lowered: Vec<String> = if has_rest {
             // Rest parameter: bundle all args at and beyond the rest
             // position (declared_count - 1) into an array, matching
             // the same-module FuncRef and closure rest-param paths.

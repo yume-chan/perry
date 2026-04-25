@@ -5,10 +5,10 @@
 //! 2. Creating closure structs to hold captured values
 //! 3. Rewriting variable accesses to use the closure struct
 
-use perry_hir::{Function, Module};
+use perry_hir::Module;
 
 /// Convert closures in a module to explicit closure structs
-pub fn convert_closures(module: &mut Module) {
+pub fn convert_closures(_module: &mut Module) {
     // TODO: Implement closure conversion
     // For MVP, we don't have closures yet, so this is a no-op
 

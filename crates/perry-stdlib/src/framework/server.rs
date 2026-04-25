@@ -3,11 +3,11 @@
 //! Uses hyper for high-performance HTTP serving.
 
 use bytes::Bytes;
-use perry_runtime::{js_string_from_bytes, JSValue, StringHeader};
+use perry_runtime::{js_string_from_bytes, StringHeader};
 use http_body_util::{BodyExt, Full};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{body::Incoming, Method, Request, Response, StatusCode};
+use hyper::{body::Incoming, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use std::collections::HashMap;
 use std::net::SocketAddr;

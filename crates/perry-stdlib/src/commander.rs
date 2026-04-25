@@ -163,7 +163,7 @@ pub extern "C" fn js_commander_action(handle: Handle, _callback: i64) -> Handle 
 
 /// Command.command(name) -> new Command handle for subcommand
 #[no_mangle]
-pub unsafe extern "C" fn js_commander_command(handle: Handle, name_ptr: *const StringHeader) -> Handle {
+pub unsafe extern "C" fn js_commander_command(_handle: Handle, name_ptr: *const StringHeader) -> Handle {
     let _name = string_from_header(name_ptr).unwrap_or_default();
     // Create a new subcommand handle
     register_handle(CommanderHandle::new())

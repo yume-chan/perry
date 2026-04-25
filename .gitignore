@@ -113,3 +113,4 @@ private-*
 
 # mdBook output
 docs/book/
+tsc

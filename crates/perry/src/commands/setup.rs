@@ -636,7 +636,7 @@ pub(crate) fn ios_wizard(saved: &mut PerryConfig) -> Result<()> {
         }
     }
 
-    let cert_resource_id = if let Some(id) = existing_cert_id {
+    let _cert_resource_id = if let Some(id) = existing_cert_id {
         id
     } else {
         // Generate a new private key + CSR, submit to Apple, get cert back, make .p12
@@ -1352,7 +1352,7 @@ fn create_apple_certificate(
     p12_password: &str,
     display_name: &str,
 ) -> Result<(String, String)> {
-    use base64::Engine;
+    
 
     // Check for existing certs of this type
     print!("  Checking for existing {} certificate... ", style(display_name).bold());
@@ -1497,7 +1497,7 @@ fn export_cert_from_keychain(
         );
     }
 
-    let (hash, identity_name) = if matching.len() == 1 {
+    let (_hash, identity_name) = if matching.len() == 1 {
         (matching[0].0.clone(), matching[0].1.clone())
     } else {
         let labels: Vec<&str> = matching.iter().map(|(_, n)| n.as_str()).collect();

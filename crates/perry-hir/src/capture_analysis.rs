@@ -51,14 +51,14 @@ fn collect_defined_in_scope_stmt(stmt: &Stmt, defined: &mut std::collections::Ha
         Stmt::Let { id, .. } => {
             defined.insert(*id);
         }
-        Stmt::If { then_branch, else_branch, .. } => {
+        Stmt::If { then_branch: _, else_branch: _, .. } => {
             // Don't recurse into if branches - they have their own scopes
             // Only collect vars at the current scope level
         }
-        Stmt::While { body, .. } | Stmt::DoWhile { body, .. } | Stmt::For { body, .. } => {
+        Stmt::While { body: _, .. } | Stmt::DoWhile { body: _, .. } | Stmt::For { body: _, .. } => {
             // Don't recurse into loop bodies - they have their own scopes
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body: _, catch: _, finally: _ } => {
             // Don't recurse into try/catch/finally - they have their own scopes
         }
         _ => {}

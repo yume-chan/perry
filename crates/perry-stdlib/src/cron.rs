@@ -450,7 +450,7 @@ pub unsafe extern "C" fn js_cron_describe(expr_ptr: *const StringHeader) -> *mut
 
 /// Set an interval (simplified - returns handle)
 #[no_mangle]
-pub extern "C" fn js_cron_set_interval(callback_id: f64, interval_ms: f64) -> Handle {
+pub extern "C" fn js_cron_set_interval(_callback_id: f64, interval_ms: f64) -> Handle {
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
     let interval = interval_ms as u64;
@@ -486,7 +486,7 @@ pub unsafe extern "C" fn js_cron_clear_interval(handle: Handle) {
 
 /// Set a timeout (simplified - returns handle)
 #[no_mangle]
-pub extern "C" fn js_cron_set_timeout(callback_id: f64, timeout_ms: f64) -> Handle {
+pub extern "C" fn js_cron_set_timeout(_callback_id: f64, timeout_ms: f64) -> Handle {
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancelled_clone = cancelled.clone();
     let timeout = timeout_ms as u64;

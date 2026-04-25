@@ -1,8 +1,8 @@
 //! Dependency checking and validation
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use perry_diagnostics::{
-    Diagnostic, DiagnosticCode, Diagnostics, FileId, SourceCache, Span,
+    Diagnostic, DiagnosticCode, Diagnostics, SourceCache,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -176,7 +176,7 @@ impl DependencyResolver {
         &mut self,
         source_cache: &mut SourceCache,
     ) -> Result<Vec<PackageCompatibility>> {
-        let node_modules = match self.find_node_modules() {
+        let _node_modules = match self.find_node_modules() {
             Some(nm) => nm,
             None => return Ok(Vec::new()),
         };
@@ -234,7 +234,7 @@ fn is_perry_builtin(name: &str) -> bool {
 pub fn check_package_compatibility(
     package_name: &str,
     package_path: &Path,
-    source_cache: &mut SourceCache,
+    _source_cache: &mut SourceCache,
 ) -> Result<PackageCompatibility> {
     let mut issues = Vec::new();
     let mut files_checked = 0;
@@ -255,7 +255,7 @@ pub fn check_package_compatibility(
 
     if !has_types {
         // Check for @types package
-        let types_package = format!("@types/{}", package_name.replace('/', "__"));
+        let _types_package = format!("@types/{}", package_name.replace('/', "__"));
         let node_modules = package_path.parent().unwrap();
         let types_path = node_modules.join("@types").join(package_name.replace('/', "__"));
 

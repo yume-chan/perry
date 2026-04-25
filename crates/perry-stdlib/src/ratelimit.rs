@@ -120,7 +120,7 @@ pub unsafe extern "C" fn js_ratelimit_consume(
                         keyed.duration_secs * 1000,
                         0
                     );
-                    let ptr = js_string_from_bytes(result.as_ptr(), result.len() as u32);
+                    let _ptr = js_string_from_bytes(result.as_ptr(), result.len() as u32);
                     return Err("Rate limit exceeded".to_string());
                 }
             }

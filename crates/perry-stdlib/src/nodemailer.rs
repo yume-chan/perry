@@ -234,7 +234,7 @@ pub unsafe extern "C" fn js_nodemailer_send_mail(
             };
 
             // Build the email message
-            let mut email_builder = Message::builder()
+            let email_builder = Message::builder()
                 .from(mail_opts.from.parse().map_err(|e| format!("Invalid from address: {}", e))?)
                 .to(mail_opts.to.parse().map_err(|e| format!("Invalid to address: {}", e))?)
                 .subject(mail_opts.subject);

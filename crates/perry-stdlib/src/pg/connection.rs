@@ -6,7 +6,7 @@ use sqlx::{Connection, Row};
 
 use crate::common::{register_handle, Handle};
 use super::result::rows_to_pg_result;
-use super::types::{parse_pg_config, PgConfig};
+use super::types::parse_pg_config;
 
 /// Wrapper around PgConnection that we can store in the handle registry
 pub struct PgConnectionHandle {

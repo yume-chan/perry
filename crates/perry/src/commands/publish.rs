@@ -492,7 +492,7 @@ pub fn run(args: PublishArgs, format: OutputFormat, use_color: bool, _verbose: u
     result
 }
 
-async fn run_async(args: PublishArgs, format: OutputFormat, use_color: bool) -> Result<()> {
+async fn run_async(args: PublishArgs, format: OutputFormat, _use_color: bool) -> Result<()> {
     let project_dir = args.project.canonicalize().unwrap_or(args.project.clone());
 
     // Load .env file from project directory (if present) so users can set
@@ -2019,7 +2019,7 @@ async fn run_async(args: PublishArgs, format: OutputFormat, use_color: bool) -> 
 
         let server_msg: ServerMessage = match serde_json::from_str(&text) {
             Ok(m) => m,
-            Err(e) => {
+            Err(_e) => {
                 // Unknown message type from hub, skip it
                 continue;
             }
@@ -2093,7 +2093,7 @@ async fn run_async(args: PublishArgs, format: OutputFormat, use_color: bool) -> 
             ServerMessage::Error {
                 code,
                 message,
-                stage,
+                stage: _,
             } => {
                 if let Some(ref pb) = pb {
                     pb.abandon_with_message(format!(

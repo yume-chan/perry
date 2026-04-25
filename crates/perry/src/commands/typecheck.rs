@@ -27,7 +27,7 @@ pub struct TypeInfo {
 
 /// msgpack encoding helpers (minimal, no external dependency)
 mod msgpack {
-    use std::io::Write;
+    
 
     /// Encode a msgpack array header with count elements
     pub fn encode_array_header(buf: &mut Vec<u8>, count: u32) {

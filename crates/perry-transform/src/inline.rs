@@ -299,7 +299,7 @@ fn body_contains_closure_capturing(stmts: &[Stmt], captured_ids: &std::collectio
     fn check_expr(expr: &Expr, captured_ids: &std::collections::HashSet<LocalId>) -> bool {
         match expr {
             Expr::Closure {
-                    enclosing_func_id, captures, body, .. } => {
+                    enclosing_func_id: _, captures, body, .. } => {
                 // Check if any capture is in the set of IDs we're looking for
                 // This check applies to BOTH closures with enclosing_func_id: None AND enclosing_func_id: Some(_)
                 // If a closure captures a parameter, it cannot be inlined regardless of where it was defined
@@ -989,7 +989,7 @@ fn try_inline_simple_call(
                 // Pattern 1: single Return(expr)
                 if func.body.len() == 1 {
                     if let Stmt::Return(Some(return_expr)) = &func.body[0] {
-                        let mut param_map = build_param_map(&func.params, args);
+                        let param_map = build_param_map(&func.params, args);
                         let mut result = return_expr.clone();
                         substitute_locals(&mut result, &param_map, next_local_id);
                         return Some((vec![], result));

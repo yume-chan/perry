@@ -95,7 +95,7 @@ impl RoutePattern {
         let mut params = HashMap::new();
         let mut path_idx = 0;
 
-        for (seg_idx, segment) in self.segments.iter().enumerate() {
+        for (_seg_idx, segment) in self.segments.iter().enumerate() {
             match segment {
                 Segment::Static(expected) => {
                     if path_idx >= path_parts.len() || path_parts[path_idx] != expected {

@@ -705,9 +705,9 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             scan_body(&ctor.params, &ctor.body, &mut referenced_from_fn);
         }
     }
-    for f in &hir.functions {
+    for _f in &hir.functions {
     }
-    
+
     // Collect all closures in the module (used in both Phase D and Phase F).
     // This must be done once and reused so we don't try to lower the same
     // closure twice with different contexts.
@@ -746,7 +746,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             }
             closure_count_before += count_in_stmts(&f.body);
         }
-        
+
         for f in &hir.functions {
             collect_closures_in_stmts(&f.body, &mut all_closures_seen, &mut all_closures);
         }
@@ -824,7 +824,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     // globals + getter functions for cross-module access.
     let exported_var_names: std::collections::HashSet<String> =
         hir.exported_objects.iter().cloned().collect();
-    
+
     // Debug: check for duplicates in hir.init
     {
         let mut let_count = 0;
@@ -838,16 +838,16 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         for (id, entries) in &let_ids {
             if entries.len() > 1 {
                 let names: Vec<String> = entries.iter().map(|(n, _)| n.clone()).collect();
-                eprintln!("[ERROR] Let ID {} appears {} times in hir.init for {} at positions: {:?} (names: {:?})", 
-                    id, entries.len(), &hir.name, 
+                eprintln!("[ERROR] Let ID {} appears {} times in hir.init for {} at positions: {:?} (names: {:?})",
+                    id, entries.len(), &hir.name,
                     entries.iter().map(|(_, pos)| pos).collect::<Vec<_>>(),
                     names);
             }
         }
     }
-    
+
     let mut module_let_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
-    
+
     for s in &hir.init {
         if let perry_hir::Stmt::Let { id, name, ty, .. } = s {
             if module_let_ids.contains(id) {
@@ -1515,6 +1515,13 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         // JavaScript-correct behaviour.  The layout matches `perry-runtime`
         // `ClosureHeader`: { func_ptr: *u8, capture_count: u32, type_tag: u32 }
         // with type_tag = CLOSURE_MAGIC = 0x434C4F53 = 1129074515.
+        //
+        // All closures are emitted with external linkage. While non-exported
+        // closures could use internal linkage for better dead-code elimination,
+        // we use external for all to handle exported const functions like
+        // `export const returnNoopFileWatcher = (): FileWatcher => ...`
+        // which aren't in hir.functions but may be imported by other modules.
+        // The linker will still optimize away unused symbols.
         let static_closure_name = format!("__perry_static_closure_{}", original_name);
         let init = format!("{{ ptr @{}, i32 0, i32 1129074515 }}", wrap_name);
         llmod.add_raw_global(format!(
@@ -1754,14 +1761,14 @@ fn compile_function(
         closure_auto_captures_cache: HashMap::new(),
         closure_scope_indices: HashMap::new(),
     };
-    
+
     // Phase 3: Initialize scope objects for closures if present
     let has_analysis = f.scope_capture_analysis.is_some();
     if has_analysis {
         // scope_capture_analysis is populated
     }
     scope_objects::initialize_scope_objects(&mut ctx)?;
-    
+
     stmt::lower_stmts(&mut ctx, &f.body)
         .with_context(|| format!("lowering body of '{}'", f.name))?;
 
@@ -1834,10 +1841,10 @@ fn compile_closure(
     closure_rest_params: &HashMap<u32, usize>,
     cross_module: &CrossModuleCtx,
 ) -> Result<()> {
-    
+
     // Destructure the closure expression. We trust that the caller
     // passes only `Expr::Closure` here (from `collect_closures_*`).
-    let (params, body, captures, captures_this, enclosing_class, enclosing_scope_capture_analysis, scope_capture_analysis) = match closure_expr {
+    let (params, body, captures, captures_this, enclosing_class, enclosing_scope_capture_analysis, _scope_capture_analysis) = match closure_expr {
         perry_hir::Expr::Closure {
             params,
             body,
@@ -2052,21 +2059,21 @@ fn compile_closure(
 
     // Phase 3: Initialize scope objects for nested closures if present
     scope_objects::initialize_scope_objects(&mut ctx)?;
-    
+
     // Phase 3b: Compute scope indices for closure body reading
     // If using scope objects, compute which scopes this closure captures
     // and map them to their indices in the capture array.
     if let Some(analysis) = &ctx.scope_capture_analysis {
         // Collect all unique scopes from auto_captures, in deterministic order
-        let mut scopes_used: std::collections::BTreeMap<perry_hir::ScopeId, ()> = 
+        let mut scopes_used: std::collections::BTreeMap<perry_hir::ScopeId, ()> =
             std::collections::BTreeMap::new();
         for cap_id in &auto_captures {
-            if let Some((scope_id, var_idx)) = crate::scope_objects::get_scope_and_index(*cap_id, analysis) {
+            if let Some((scope_id, _var_idx)) = crate::scope_objects::get_scope_and_index(*cap_id, analysis) {
                 scopes_used.insert(scope_id, ());
             } else {
             }
         }
-        
+
         // Build the mapping: each scope gets an index in the capture array
         for (idx, scope_id) in scopes_used.keys().enumerate() {
             ctx.closure_scope_indices.insert(*scope_id, idx);
@@ -3096,10 +3103,10 @@ fn compile_static_method(
         closure_auto_captures_cache: HashMap::new(),
         closure_scope_indices: HashMap::new(),
     };
-    
+
     // Phase 3: Initialize scope objects if present
     scope_objects::initialize_scope_objects(&mut ctx)?;
-    
+
     stmt::lower_stmts(&mut ctx, &f.body)
         .with_context(|| format!("lowering body of static '{}::{}'", class_name, f.name))?;
 

@@ -4,7 +4,6 @@
 //! either showing a diff (dry-run) or modifying the files in place.
 
 use crate::commands::fixer::{Confidence, FixableIssue};
-use perry_diagnostics::FileId;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};

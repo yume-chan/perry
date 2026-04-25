@@ -236,7 +236,7 @@ pub unsafe extern "C" fn js_keccak256_native(buf_ptr: i64) -> *mut StringHeader 
 #[no_mangle]
 pub unsafe extern "C" fn js_keccak256_native_bytes(buf_ptr: i64) -> *mut perry_runtime::buffer::BufferHeader {
     let buf_ptr = (buf_ptr as u64 & 0x0000_FFFF_FFFF_FFFF) as *const perry_runtime::buffer::BufferHeader;
-    let (data, len) = if buf_ptr.is_null() {
+    let (data, _len) = if buf_ptr.is_null() {
         (&[] as &[u8], 0)
     } else {
         let len = (*buf_ptr).length as usize;

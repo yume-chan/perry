@@ -782,7 +782,7 @@ fn find_icon_source(project_root: &Path) -> Option<PathBuf> {
 }
 
 fn extract_app_from_ipa(ipa_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
-    use std::io::Read;
+    
 
     let file = std::fs::File::open(ipa_path).context("Failed to open .ipa")?;
     let mut archive = zip::ZipArchive::new(file).context("Failed to read .ipa as ZIP")?;
@@ -1070,7 +1070,7 @@ fn find_system_dev_profile(bundle_id: &str, team_id: &str) -> Option<PathBuf> {
 async fn create_dev_profile_via_api(
     config: &super::publish::PerryConfig,
     bundle_id: &str,
-    team_id: &str,
+    _team_id: &str,
     device_udid: &str,
     format: OutputFormat,
 ) -> Result<Vec<u8>> {
@@ -1532,7 +1532,7 @@ fn auto_export_p12(identity: Option<&str>) -> (Option<String>, Option<String>) {
         }
     }
 
-    let hash = match hash {
+    let _hash = match hash {
         Some(h) => h,
         None => return (None, None),
     };

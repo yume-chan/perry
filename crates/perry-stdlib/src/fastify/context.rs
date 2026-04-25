@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use perry_runtime::{js_string_from_bytes, StringHeader, JSValue};
 
-use crate::common::{get_handle, get_handle_mut, register_handle, Handle};
+use crate::common::{get_handle, get_handle_mut, Handle};
 
 // Declare perry-runtime's JSON parser (defined in perry-runtime with #[no_mangle])
 extern "C" {

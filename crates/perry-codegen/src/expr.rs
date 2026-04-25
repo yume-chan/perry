@@ -3002,7 +3002,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             captures_this,
             is_async,
             enclosing_scope_capture_analysis,
-            scope_capture_analysis,
+            scope_capture_analysis: _,
             ..
         } => {
             // captures_this used to be a hard error here. Phase H.3
@@ -3090,7 +3090,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // Now load the scope pointers (can mutable borrow ctx now that analysis borrow is released)
             if !scopes_to_load.is_empty() {
                 use_scope_objects = true;
-                for (scope_id, scope_ptr_slot_or_marker) in scopes_to_load.iter() {
+                for (_scope_id, scope_ptr_slot_or_marker) in scopes_to_load.iter() {
                     // If this is a closure capture marker, load from the current closure's captures
                     if scope_ptr_slot_or_marker.starts_with("[closure_capture_") {
                         if let Some(closure_ptr) = &ctx.current_closure_ptr.clone() {
@@ -8008,7 +8008,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
 
         Expr::ChildProcessSpawnBackground { command, args, log_file, env_json } => {
             let cmd_box = lower_expr(ctx, command)?;
-            let args_box = if let Some(a) = args {
+            let _args_box = if let Some(a) = args {
                 lower_expr(ctx, a)?
             } else {
                 double_literal(0.0)

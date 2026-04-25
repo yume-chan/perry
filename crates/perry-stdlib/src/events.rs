@@ -3,7 +3,7 @@
 //! Native implementation of Node.js EventEmitter pattern.
 //! Provides on(), emit(), and removeListener() for event handling.
 
-use perry_runtime::{js_string_from_bytes, StringHeader, ClosureHeader, js_closure_call0, js_closure_call1};
+use perry_runtime::{StringHeader, ClosureHeader, js_closure_call0, js_closure_call1};
 use std::collections::HashMap;
 
 use crate::common::{for_each_handle_of, get_handle_mut, register_handle, Handle};

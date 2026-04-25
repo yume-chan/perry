@@ -16,9 +16,8 @@ use tokio::sync::mpsc;
 
 use perry_runtime::{js_string_from_bytes, StringHeader, JSValue};
 
-use crate::common::{get_handle, get_handle_mut, register_handle, Handle, RUNTIME};
+use crate::common::{get_handle, register_handle, Handle, RUNTIME};
 use super::{FastifyApp, FastifyContext, ClosurePtr};
-use super::context::string_from_header;
 
 /// Server handle for managing the running server
 pub struct FastifyServerHandle {

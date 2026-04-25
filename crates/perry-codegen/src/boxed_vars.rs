@@ -130,7 +130,7 @@ fn collect_nested_closure_boxed_vars_in_stmts(
     stmts: &[perry_hir::Stmt],
     out: &mut HashSet<u32>,
 ) {
-    use perry_hir::Stmt;
+    
     for s in stmts {
         collect_nested_closure_boxed_vars_in_stmt(s, out);
     }

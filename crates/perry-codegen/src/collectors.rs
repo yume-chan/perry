@@ -309,7 +309,7 @@ fn collect_closures_in_expr(
     // Helper closure that recurses into a sub-expression. We use a
     // local closure rather than a method so we can keep the same
     // recursion entry point.
-    let mut walk = |sub: &Expr,
+    let walk = |sub: &Expr,
                     seen: &mut HashSet<perry_types::FuncId>,
                     out: &mut Vec<(perry_types::FuncId, Expr)>| {
         collect_closures_in_expr(sub, seen, out);
@@ -869,7 +869,7 @@ pub(crate) fn collect_ref_ids_in_stmts(stmts: &[perry_hir::Stmt], out: &mut Hash
 
 fn collect_ref_ids_in_expr(e: &perry_hir::Expr, out: &mut HashSet<u32>) {
     use perry_hir::{ArrayElement, CallArg, Expr};
-    let mut walk = |sub: &Expr, out: &mut HashSet<u32>| {
+    let walk = |sub: &Expr, out: &mut HashSet<u32>| {
         collect_ref_ids_in_expr(sub, out);
     };
     match e {
@@ -1717,7 +1717,7 @@ fn collect_localset_ids_in_expr_filtered(
     clamp_fn_ids: &HashSet<u32>,
 ) {
     use perry_hir::{ArrayElement, CallArg, Expr};
-    let mut walk = |sub: &Expr, out: &mut HashSet<u32>| {
+    let walk = |sub: &Expr, out: &mut HashSet<u32>| {
         collect_localset_ids_in_expr_filtered(sub, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
     };
     match e {
@@ -2313,7 +2313,7 @@ pub(crate) fn collect_non_escaping_news(
     module_globals: &std::collections::HashMap<u32, String>,
     classes: &std::collections::HashMap<String, &perry_hir::Class>,
 ) -> std::collections::HashMap<u32, String> {
-    use perry_hir::{Expr, Stmt};
+    
 
     // Pass 1: find candidates — Let bindings of New that aren't boxed/global.
     let mut candidates: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
@@ -3075,7 +3075,7 @@ fn check_escapes_in_expr(
 
 /// Helper: does this expression contain `LocalGet(target_id)` anywhere?
 fn expr_contains_local_get(e: &perry_hir::Expr, target_id: u32) -> bool {
-    use perry_hir::{ArrayElement, CallArg, Expr};
+    use perry_hir::Expr;
     match e {
         Expr::LocalGet(id) => *id == target_id,
         Expr::Binary { left, right, .. }
@@ -3130,7 +3130,7 @@ fn mark_all_candidate_refs_in_expr(
     candidates: &std::collections::HashMap<u32, String>,
     escaped: &mut HashSet<u32>,
 ) {
-    use perry_hir::Expr;
+    
     // Use the existing ref-id collector to find all local references
     let mut refs: HashSet<u32> = HashSet::new();
     collect_ref_ids_in_expr(e, &mut refs);

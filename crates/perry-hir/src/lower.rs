@@ -1239,7 +1239,7 @@ pub fn lower_module_with_class_id_and_types(ast_module: &ast::Module, name: &str
 
     // Pre-register module-level variable declarations so function bodies
     // declared before the variable can still reference them via lookup_local
-    let pre_reg_count_start = ctx.locals.len();
+    let _pre_reg_count_start = ctx.locals.len();
     for item in &ast_module.body {
         let var_decl = match item {
             ast::ModuleItem::Stmt(ast::Stmt::Decl(ast::Decl::Var(v))) => Some(v),
@@ -3539,7 +3539,7 @@ fn lower_namespace_as_class(
             for decl in &var_decl.decls {
                 if let Ok(name) = get_binding_name(&decl.name) {
                     let ty = extract_binding_type(&decl.name);
-                    let id = ctx.define_local(name.clone(), ty);
+                    let _id = ctx.define_local(name.clone(), ty);
                     // Mark it so we know not to re-register it later
                     ctx.pre_registered_module_vars.insert(name.clone());
                     namespace_var_names.push(name);
@@ -4050,7 +4050,7 @@ fn lower_stmt(
                         ctxt: Default::default(),
                     };
                     let mutable = false;
-                    let is_var = false;
+                    let _is_var = false;
                     for decl in &fake_var.decls {
                         if let Some(init) = &decl.init {
                             match &decl.name {
@@ -7689,9 +7689,9 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                             // This handles cases where the array is a property of an object, not a local variable
                             if let ast::Expr::Member(obj_member) = member.obj.as_ref() {
                                 if let ast::MemberProp::Ident(obj_prop_ident) = &obj_member.prop {
-                                    let property_name = obj_prop_ident.sym.to_string();
+                                    let _property_name = obj_prop_ident.sym.to_string();
                                     // Lower the object expression (e.g., 'this' or a local variable)
-                                    let object_expr = lower_expr(ctx, &obj_member.obj)?;
+                                    let _object_expr = lower_expr(ctx, &obj_member.obj)?;
 
                                     match method_name {
                                         "push" => {
@@ -11975,7 +11975,7 @@ fn try_lower_widget_decl(
     let mut placeholder: Option<Vec<(String, WidgetPlaceholderValue)>> = None;
     let mut family_param_name: Option<String> = None;
     let mut app_group: Option<String> = None;
-    let mut reload_after_seconds: Option<u32> = None;
+    let reload_after_seconds: Option<u32> = None;
 
     for prop in &config_obj.props {
         let kv = match prop {

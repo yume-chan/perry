@@ -4,8 +4,7 @@
 //! Provides array, object, string, and utility operations.
 
 use perry_runtime::{
-    js_array_alloc, js_array_get, js_array_length, js_array_push, js_object_alloc,
-    js_object_get_field, js_object_set_field, js_string_from_bytes, JSValue, ObjectHeader,
+    js_array_alloc, js_array_get, js_array_length, js_array_push, js_string_from_bytes, JSValue,
     StringHeader, ArrayHeader,
 };
 use std::collections::HashSet;
@@ -200,7 +199,7 @@ pub unsafe extern "C" fn js_lodash_drop_right(
 #[no_mangle]
 pub unsafe extern "C" fn js_lodash_fill(
     arr_ptr: *mut ArrayHeader,
-    value: JSValue,
+    _value: JSValue,
     start: f64,
     end: f64,
 ) -> *mut ArrayHeader {
@@ -212,8 +211,8 @@ pub unsafe extern "C" fn js_lodash_fill(
     let start = start as i32;
     let end = if end.is_nan() { len } else { end as i32 };
 
-    let start = if start < 0 { (len + start).max(0) } else { start.min(len) } as u32;
-    let end = if end < 0 { (len + end).max(0) } else { end.min(len) } as u32;
+    let _start = if start < 0 { (len + start).max(0) } else { start.min(len) } as u32;
+    let _end = if end < 0 { (len + end).max(0) } else { end.min(len) } as u32;
 
     // Note: This modifies in place, but for safety we return the array
     // In a real implementation, we'd need mutable array access

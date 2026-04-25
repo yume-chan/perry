@@ -404,7 +404,7 @@ fn strip_duplicate_objects_from_lib(lib_path: &PathBuf) -> Result<PathBuf> {
     };
 
     // Determine the UI crate name from the staticlib filename
-    let ui_crate_name = lib_path.file_stem()
+    let _ui_crate_name = lib_path.file_stem()
         .and_then(|f| f.to_str())
         .unwrap_or("");
 
@@ -1679,7 +1679,7 @@ fn resolve_with_extensions(base: &Path) -> Option<PathBuf> {
     // TypeScript extensions to try (in order of preference)
     let ts_extensions = [".ts", ".tsx", ".mts"];
     // JavaScript extensions (fallback)
-    let js_extensions = [".js", ".mjs", ".cjs"];
+    let _js_extensions = [".js", ".mjs", ".cjs"];
     // All extensions in order of preference
     let all_extensions = [".ts", ".tsx", ".mts", ".js", ".mjs", ".cjs", ".json"];
 
@@ -4321,7 +4321,7 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
     let needs_js_runtime = ctx.needs_js_runtime || args.enable_js_runtime;
 
     // Compile native modules in parallel using rayon
-    use rayon::prelude::*;
+    
 
     // Snapshot i18n data from main thread so rayon workers can access it.
     // The `default_locale_idx` is required by the LLVM backend to resolve
@@ -4344,8 +4344,14 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
     // mode here so the per-module codegen can emit .ll instead of .o.
     let bitcode_link =
         std::env::var("PERRY_LLVM_BITCODE_LINK").ok().as_deref() == Some("1");
+    
+    let start_codegen = std::time::Instant::now();
+    let module_count = ctx.native_modules.len();
+    eprintln!("[TIMING] Starting parallel LLVM codegen for {} modules", module_count);
+    
     let compile_results: Vec<Result<(PathBuf, Vec<u8>), String>> = ctx.native_modules.par_iter()
         .map(|(path, hir_module)| {
+            let module_start = std::time::Instant::now();
             // Compile this module to LLVM IR (or .ll text in bitcode-link mode)
             // and return the object bytes for the linker to consume.
             let is_entry = path == &entry_path;
@@ -4718,9 +4724,14 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
             // In bitcode mode the bytes are .ll text; use .ll extension.
             let ext = if bitcode_link { "ll" } else { "o" };
             let obj_path = PathBuf::from(format!("{}.{}", obj_name, ext));
+            let module_elapsed = module_start.elapsed();
+            eprintln!("[TIMING] Compiled module {} in {:.2}s", hir_module.name, module_elapsed.as_secs_f64());
             return Ok((obj_path, object_code));
         })
         .collect();
+    
+    let codegen_elapsed = start_codegen.elapsed();
+    eprintln!("[TIMING] Parallel LLVM codegen completed in {:.2}s", codegen_elapsed.as_secs_f64());
 
     // Write object files and collect results (sequential — I/O + error reporting)
     let mut failed_modules: Vec<String> = Vec::new();
@@ -4890,7 +4901,7 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
             }
         }
         // Platform detection for nm tool and symbol prefix
-        let is_ios = matches!(target.as_deref(), Some("ios-simulator") | Some("ios"));
+        let _is_ios = matches!(target.as_deref(), Some("ios-simulator") | Some("ios"));
         let is_android = matches!(target.as_deref(), Some("android"));
         let is_linux = matches!(target.as_deref(), Some("linux")) || (!cfg!(target_os = "macos") && !cfg!(target_os = "windows") && target.is_none());
         let is_windows = matches!(target.as_deref(), Some("windows")) || (cfg!(target_os = "windows") && target.is_none());
@@ -4980,7 +4991,7 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
     // Phase J: bitcode link — merge user .ll + runtime/stdlib .bc into one
     // optimized object via llvm-link → opt → llc. This replaces both the
     // per-module clang -c step AND the archive linking.
-    let bitcode_linked = if bitcode_link && optimized_libs.runtime_bc.is_some() {
+    let _bitcode_linked = if bitcode_link && optimized_libs.runtime_bc.is_some() {
         if matches!(format, OutputFormat::Text) {
             println!("Using LLVM bitcode link (whole-program LTO)");
         }
@@ -5523,7 +5534,7 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
     } else if is_linux {
         // Linux target: when running on Linux natively, just use "cc".
         // When cross-compiling from macOS, pass -target for clang.
-        let mut c = Command::new("cc");
+        let c = Command::new("cc");
         #[cfg(not(target_os = "linux"))]
         {
             c.arg("-target").arg("x86_64-unknown-linux-gnu");
@@ -5935,7 +5946,7 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
         }
 
         // On Linux (native, not cross-compiling to macOS), link against system libraries
-        if (cfg!(target_os = "linux") && !is_cross_macos) {
+        if cfg!(target_os = "linux") && !is_cross_macos {
             cmd.arg("-lm")
                .arg("-lpthread")
                .arg("-ldl");
@@ -6653,7 +6664,7 @@ pub fn run(args: CompileArgs, format: OutputFormat, use_color: bool, verbose: u8
                         ) {
                             let ipad_start = plist.find("<key>UISupportedInterfaceOrientations~ipad</key>").unwrap();
                             // Find end of iPhone array
-                            let iphone_section = &plist[start..ipad_start];
+                            let _iphone_section = &plist[start..ipad_start];
                             plist = format!(
                                 "{}{}\n    {}",
                                 &plist[..start],

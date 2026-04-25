@@ -6,7 +6,7 @@
 use perry_runtime::{js_string_from_bytes, JSValue, StringHeader};
 use flate2::read::{GzDecoder, GzEncoder, DeflateDecoder, DeflateEncoder};
 use flate2::Compression;
-use std::io::{Read, Write};
+use std::io::Read;
 
 use crate::common::async_bridge::{queue_promise_resolution, spawn};
 

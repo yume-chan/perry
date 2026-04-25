@@ -1918,7 +1918,7 @@ impl WasmModuleEmitter {
         let mut func = Function::new(locals);
 
         let mut ctx = FuncEmitCtx::new(self, &local_map, temp_local_idx, temp_i32_idx);
-        let has_ret = body.iter().any(|s| has_return(s));
+        let _has_ret = body.iter().any(|s| has_return(s));
 
         for stmt in body {
             ctx.emit_stmt(&mut func, stmt, true); // closures always "return"
@@ -2007,7 +2007,7 @@ impl WasmModuleEmitter {
         let temp_i32_idx = temp_local_idx + 2;
         let locals = vec![(extra_locals + 2, ValType::I64), (1, ValType::I32)];
         let mut func = Function::new(locals);
-        let has_ret = method.body.iter().any(|s| has_return(s));
+        let _has_ret = method.body.iter().any(|s| has_return(s));
         let mut ctx = FuncEmitCtx::new(self, &local_map, temp_local_idx, temp_i32_idx);
 
         for stmt in &method.body {
@@ -2283,7 +2283,7 @@ impl WasmModuleEmitter {
                     }
                     Expr::PropertyGet { object, property } => {
                         let obj = self.emit_js_expr(object, locals);
-                        let args_str = args_js.join(", ");
+                        let _args_str = args_js.join(", ");
                         format!("fromJsValue(toJsValue({}).{}({}))", obj, property,
                             args.iter().map(|a| format!("toJsValue({})", self.emit_js_expr(a, locals))).collect::<Vec<_>>().join(", "))
                     }
@@ -4428,7 +4428,7 @@ impl<'a> FuncEmitCtx<'a> {
                     "perry/ui" | "perry/system" => {
                         // Memory-based dispatch: write args to WASM memory via i64.store.
                         let bridge_name = map_ui_method(method, class_name.as_deref());
-                        let name_id = self.emitter.string_map.get(bridge_name).copied().unwrap_or(0);
+                        let _name_id = self.emitter.string_map.get(bridge_name).copied().unwrap_or(0);
                         let mut slot = 0u32;
                         let total_slots = (if object.is_some() { 1 } else { 0 }) + args.len() as u32;
                         self.emit_frame_begin(func, total_slots);
@@ -5522,7 +5522,7 @@ impl<'a> FuncEmitCtx<'a> {
                     self.emit_memcall(func, "array_to_sorted", 1);
                 }
             }
-            Expr::ArrayToSpliced { array, start, delete_count, items } => {
+            Expr::ArrayToSpliced { array, start, delete_count, items: _ } => {
                 self.emit_store_arg(func, 0, array);
                 self.emit_store_arg(func, 1, start);
                 self.emit_store_arg(func, 2, delete_count);
