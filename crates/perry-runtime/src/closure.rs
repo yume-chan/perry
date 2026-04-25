@@ -35,6 +35,8 @@ pub struct ClosureHeader {
     pub capture_count: u32,
     /// Type tag: set to CLOSURE_MAGIC to identify closures at runtime
     pub type_tag: u32,
+    /// Function arity (number of parameters). Used by js_closure_callN to fill defaults.
+    pub arity: i32,
 }
 
 /// Allocate a closure with space for captured values.
@@ -56,6 +58,7 @@ pub extern "C" fn js_closure_alloc(func_ptr: *const u8, capture_count: u32) -> *
         (*ptr).func_ptr = func_ptr;
         (*ptr).capture_count = capture_count; // Preserve flag in high bit
         (*ptr).type_tag = CLOSURE_MAGIC;
+        (*ptr).arity = 0; // Default arity for dynamically allocated closures (will be updated if needed)
     }
 
     ptr
@@ -181,7 +184,7 @@ fn get_valid_func_ptr(closure: *const ClosureHeader) -> *const u8 {
 
 /// Call a closure with 0 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call0(closure: *const ClosureHeader) -> f64 {
+pub extern "C" fn js_closure_call0(closure: *const ClosureHeader, param_count: i32) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -189,13 +192,63 @@ pub extern "C" fn js_closure_call0(closure: *const ClosureHeader) -> f64 {
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[]) };
     }
-    let func: extern "C" fn(*const ClosureHeader) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity }
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        7..=16 => {
+            // For arity 7-16, we use a generic transmute to the maximum 16-param function
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, 
+                f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED),
+                f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED),
+                f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED),
+                f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            eprintln!("[DEBUG] js_closure_call0: arity > 16, falling back to 2-param");
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        }
+    }
 }
 
 /// Call a closure with 1 argument, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call1(closure: *const ClosureHeader, arg0: f64) -> f64 {
+pub extern "C" fn js_closure_call1(closure: *const ClosureHeader, param_count: i32, arg0: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -203,13 +256,63 @@ pub extern "C" fn js_closure_call1(closure: *const ClosureHeader, arg0: f64) -> 
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            // This shouldn't normally happen, but handle it gracefully
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        7..=16 => {
+            // For arity 7-16, we use a generic transmute to the maximum 16-param function
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0,
+                f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED),
+                f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED),
+                f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED),
+                f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        }
+    }
 }
 
 /// Call a closure with 2 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call2(closure: *const ClosureHeader, arg0: f64, arg1: f64) -> f64 {
+pub extern "C" fn js_closure_call2(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -217,13 +320,41 @@ pub extern "C" fn js_closure_call2(closure: *const ClosureHeader, arg0: f64, arg
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        }
+    }
 }
 
 /// Call a closure with 3 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call3(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64) -> f64 {
+pub extern "C" fn js_closure_call3(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -231,13 +362,45 @@ pub extern "C" fn js_closure_call3(closure: *const ClosureHeader, arg0: f64, arg
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        }
+    }
 }
 
 /// Call a closure with 4 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call4(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64) -> f64 {
+pub extern "C" fn js_closure_call4(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -245,13 +408,49 @@ pub extern "C" fn js_closure_call4(closure: *const ClosureHeader, arg0: f64, arg
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        }
+    }
 }
 
 /// Call a closure with 5 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call5(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64) -> f64 {
+pub extern "C" fn js_closure_call5(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -259,13 +458,53 @@ pub extern "C" fn js_closure_call5(closure: *const ClosureHeader, arg0: f64, arg
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        }
+    }
 }
 
 /// Call a closure with 6 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call6(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64) -> f64 {
+pub extern "C" fn js_closure_call6(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -273,13 +512,57 @@ pub extern "C" fn js_closure_call6(closure: *const ClosureHeader, arg0: f64, arg
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4, arg5)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        },
+        7..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        }
+    }
 }
 
 /// Call a closure with 7 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call7(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64) -> f64 {
+pub extern "C" fn js_closure_call7(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -287,13 +570,61 @@ pub extern "C" fn js_closure_call7(closure: *const ClosureHeader, arg0: f64, arg
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        },
+        7 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+        },
+        8..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+        }
+    }
 }
 
 /// Call a closure with 8 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call8(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64) -> f64 {
+pub extern "C" fn js_closure_call8(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -301,13 +632,65 @@ pub extern "C" fn js_closure_call8(closure: *const ClosureHeader, arg0: f64, arg
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        },
+        7 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+        },
+        8 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+        },
+        9..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+        }
+    }
 }
 
 /// Call a closure with 9 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call9(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64) -> f64 {
+pub extern "C" fn js_closure_call9(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -315,13 +698,69 @@ pub extern "C" fn js_closure_call9(closure: *const ClosureHeader, arg0: f64, arg
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        },
+        7 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+        },
+        8 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+        },
+        9 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+        },
+        10..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+        }
+    }
 }
 
 /// Call a closure with 10 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call10(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64) -> f64 {
+pub extern "C" fn js_closure_call10(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -329,13 +768,73 @@ pub extern "C" fn js_closure_call10(closure: *const ClosureHeader, arg0: f64, ar
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        },
+        7 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+        },
+        8 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+        },
+        9 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+        },
+        10 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+        },
+        11..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+        }
+    }
 }
 
 /// Call a closure with 11 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call11(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64) -> f64 {
+pub extern "C" fn js_closure_call11(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -343,13 +842,77 @@ pub extern "C" fn js_closure_call11(closure: *const ClosureHeader, arg0: f64, ar
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        },
+        7 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+        },
+        8 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+        },
+        9 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+        },
+        10 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+        },
+        11 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
+        },
+        12..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
+        }
+    }
 }
 
 /// Call a closure with 12 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call12(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64, arg11: f64) -> f64 {
+pub extern "C" fn js_closure_call12(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64, arg11: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -357,13 +920,81 @@ pub extern "C" fn js_closure_call12(closure: *const ClosureHeader, arg0: f64, ar
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        },
+        7 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+        },
+        8 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+        },
+        9 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+        },
+        10 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+        },
+        11 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
+        },
+        12 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11)
+        },
+        13..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11)
+        }
+    }
 }
 
 /// Call a closure with 13 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call13(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64, arg11: f64, arg12: f64) -> f64 {
+pub extern "C" fn js_closure_call13(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64, arg11: f64, arg12: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -371,13 +1002,85 @@ pub extern "C" fn js_closure_call13(closure: *const ClosureHeader, arg0: f64, ar
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        },
+        7 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+        },
+        8 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+        },
+        9 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+        },
+        10 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+        },
+        11 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
+        },
+        12 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11)
+        },
+        13 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12)
+        },
+        14..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12)
+        }
+    }
 }
 
 /// Call a closure with 14 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call14(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64, arg11: f64, arg12: f64, arg13: f64) -> f64 {
+pub extern "C" fn js_closure_call14(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64, arg11: f64, arg12: f64, arg13: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -385,13 +1088,89 @@ pub extern "C" fn js_closure_call14(closure: *const ClosureHeader, arg0: f64, ar
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        },
+        7 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+        },
+        8 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+        },
+        9 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+        },
+        10 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+        },
+        11 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
+        },
+        12 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11)
+        },
+        13 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12)
+        },
+        14 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13)
+        },
+        15..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13)
+        }
+    }
 }
 
 /// Call a closure with 15 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call15(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64, arg11: f64, arg12: f64, arg13: f64, arg14: f64) -> f64 {
+pub extern "C" fn js_closure_call15(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64, arg11: f64, arg12: f64, arg13: f64, arg14: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -399,13 +1178,93 @@ pub extern "C" fn js_closure_call15(closure: *const ClosureHeader, arg0: f64, ar
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        },
+        7 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+        },
+        8 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+        },
+        9 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+        },
+        10 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+        },
+        11 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
+        },
+        12 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11)
+        },
+        13 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12)
+        },
+        14 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13)
+        },
+        15 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14)
+        },
+        16..=16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14, f64::from_bits(crate::value::TAG_UNDEFINED))
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14)
+        }
+    }
 }
 
 /// Call a closure with 16 arguments, returning f64
 #[no_mangle]
-pub extern "C" fn js_closure_call16(closure: *const ClosureHeader, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64, arg11: f64, arg12: f64, arg13: f64, arg14: f64, arg15: f64) -> f64 {
+pub extern "C" fn js_closure_call16(closure: *const ClosureHeader, param_count: i32, arg0: f64, arg1: f64, arg2: f64, arg3: f64, arg4: f64, arg5: f64, arg6: f64, arg7: f64, arg8: f64, arg9: f64, arg10: f64, arg11: f64, arg12: f64, arg13: f64, arg14: f64, arg15: f64) -> f64 {
     let func_ptr = get_valid_func_ptr(closure);
     if func_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
@@ -413,9 +1272,90 @@ pub extern "C" fn js_closure_call16(closure: *const ClosureHeader, arg0: f64, ar
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14, arg15]) };
     }
-    let func: extern "C" fn(*const ClosureHeader, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-    func(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14, arg15)
+    
+    // Get arity to determine how many parameters the wrapper expects
+    let arity = if closure.is_null() { 
+        0 
+    } else { 
+        unsafe { (*closure).arity } 
+    };
+    
+    match arity {
+        0 => {
+            let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count)
+        },
+        1 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0)
+        },
+        2 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1)
+        },
+        3 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2)
+        },
+        4 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3)
+        },
+        5 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4)
+        },
+        6 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5)
+        },
+        7 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+        },
+        8 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+        },
+        9 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+        },
+        10 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+        },
+        11 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
+        },
+        12 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11)
+        },
+        13 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12)
+        },
+        14 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13)
+        },
+        15 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14)
+        },
+        16 => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14, arg15)
+        },
+        _ => {
+            let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
+            func(closure, param_count, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14, arg15)
+        }
+    }
 }
+
 
 /// Call a JavaScript function value with variable arguments
 /// This is the native implementation for dynamic function dispatch.
@@ -455,28 +1395,28 @@ pub unsafe extern "C" fn js_native_call_value(
 
     // Call with the appropriate arity
     match args_len {
-        0 => js_closure_call0(closure),
+        0 => js_closure_call0(closure, 0),
         1 => {
             let arg0 = if args_ptr.is_null() { 0.0 } else { *args_ptr };
-            js_closure_call1(closure, arg0)
+            js_closure_call1(closure, 1, arg0)
         }
         2 => {
             let arg0 = if args_ptr.is_null() { 0.0 } else { *args_ptr };
             let arg1 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(1) };
-            js_closure_call2(closure, arg0, arg1)
+            js_closure_call2(closure, 2, arg0, arg1)
         }
         3 => {
             let arg0 = if args_ptr.is_null() { 0.0 } else { *args_ptr };
             let arg1 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(1) };
             let arg2 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(2) };
-            js_closure_call3(closure, arg0, arg1, arg2)
+            js_closure_call3(closure, 3, arg0, arg1, arg2)
         }
         4 => {
             let arg0 = if args_ptr.is_null() { 0.0 } else { *args_ptr };
             let arg1 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(1) };
             let arg2 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(2) };
             let arg3 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(3) };
-            js_closure_call4(closure, arg0, arg1, arg2, arg3)
+            js_closure_call4(closure, 4, arg0, arg1, arg2, arg3)
         }
         5 => {
             let arg0 = if args_ptr.is_null() { 0.0 } else { *args_ptr };
@@ -484,7 +1424,7 @@ pub unsafe extern "C" fn js_native_call_value(
             let arg2 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(2) };
             let arg3 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(3) };
             let arg4 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(4) };
-            js_closure_call5(closure, arg0, arg1, arg2, arg3, arg4)
+            js_closure_call5(closure, 5, arg0, arg1, arg2, arg3, arg4)
         }
         6 => {
             let arg0 = if args_ptr.is_null() { 0.0 } else { *args_ptr };
@@ -493,7 +1433,7 @@ pub unsafe extern "C" fn js_native_call_value(
             let arg3 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(3) };
             let arg4 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(4) };
             let arg5 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(5) };
-            js_closure_call6(closure, arg0, arg1, arg2, arg3, arg4, arg5)
+            js_closure_call6(closure, 6, arg0, arg1, arg2, arg3, arg4, arg5)
         }
         7 => {
             let arg0 = if args_ptr.is_null() { 0.0 } else { *args_ptr };
@@ -503,7 +1443,7 @@ pub unsafe extern "C" fn js_native_call_value(
             let arg4 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(4) };
             let arg5 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(5) };
             let arg6 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(6) };
-            js_closure_call7(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
+            js_closure_call7(closure, 7, arg0, arg1, arg2, arg3, arg4, arg5, arg6)
         }
         8 => {
             let arg0 = if args_ptr.is_null() { 0.0 } else { *args_ptr };
@@ -514,44 +1454,44 @@ pub unsafe extern "C" fn js_native_call_value(
             let arg5 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(5) };
             let arg6 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(6) };
             let arg7 = if args_ptr.is_null() { 0.0 } else { *args_ptr.add(7) };
-            js_closure_call8(closure, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+            js_closure_call8(closure, 8, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
         }
         9 => {
             let a = |i: usize| if args_ptr.is_null() { 0.0 } else { *args_ptr.add(i) };
-            js_closure_call9(closure, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8))
+            js_closure_call9(closure, 9, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8))
         }
         10 => {
             let a = |i: usize| if args_ptr.is_null() { 0.0 } else { *args_ptr.add(i) };
-            js_closure_call10(closure, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9))
+            js_closure_call10(closure, 10, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9))
         }
         11 => {
             let a = |i: usize| if args_ptr.is_null() { 0.0 } else { *args_ptr.add(i) };
-            js_closure_call11(closure, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10))
+            js_closure_call11(closure, 11, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10))
         }
         12 => {
             let a = |i: usize| if args_ptr.is_null() { 0.0 } else { *args_ptr.add(i) };
-            js_closure_call12(closure, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11))
+            js_closure_call12(closure, 12, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11))
         }
         13 => {
             let a = |i: usize| if args_ptr.is_null() { 0.0 } else { *args_ptr.add(i) };
-            js_closure_call13(closure, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11), a(12))
+            js_closure_call13(closure, 13, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11), a(12))
         }
         14 => {
             let a = |i: usize| if args_ptr.is_null() { 0.0 } else { *args_ptr.add(i) };
-            js_closure_call14(closure, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11), a(12), a(13))
+            js_closure_call14(closure, 14, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11), a(12), a(13))
         }
         15 => {
             let a = |i: usize| if args_ptr.is_null() { 0.0 } else { *args_ptr.add(i) };
-            js_closure_call15(closure, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11), a(12), a(13), a(14))
+            js_closure_call15(closure, 15, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11), a(12), a(13), a(14))
         }
         16 => {
             let a = |i: usize| if args_ptr.is_null() { 0.0 } else { *args_ptr.add(i) };
-            js_closure_call16(closure, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11), a(12), a(13), a(14), a(15))
+            js_closure_call16(closure, 16, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11), a(12), a(13), a(14), a(15))
         }
         _ => {
             eprintln!("Warning: js_native_call_value called with {} args, only supporting up to 16", args_len);
             let a = |i: usize| if args_ptr.is_null() { 0.0 } else { *args_ptr.add(i) };
-            js_closure_call16(closure, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11), a(12), a(13), a(14), a(15))
+            js_closure_call16(closure, 16, a(0), a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9), a(10), a(11), a(12), a(13), a(14), a(15))
         }
     }
 }
@@ -702,7 +1642,7 @@ mod tests {
     fn test_closure_basic() {
         let closure = js_closure_alloc(test_closure_func as *const u8, 1);
         js_closure_set_capture_f64(closure, 0, 21.0);
-        let result = js_closure_call0(closure);
+        let result = js_closure_call0(closure, 0);
         assert_eq!(result, 42.0);
     }
 }

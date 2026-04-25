@@ -813,6 +813,7 @@ pub extern "C" fn js_string_replace_regex_fn(
                 let offset_f64 = char_offset as f64;
                 crate::closure::js_closure_call2(
                     closure_ptr,
+                    2,
                     match_nanboxed,
                     offset_f64,
                 )
@@ -826,6 +827,7 @@ pub extern "C" fn js_string_replace_regex_fn(
                 let offset_f64 = char_offset as f64;
                 crate::closure::js_closure_call3(
                     closure_ptr,
+                    3,
                     match_nanboxed,
                     p1,
                     offset_f64,
@@ -845,6 +847,7 @@ pub extern "C" fn js_string_replace_regex_fn(
                 let offset_f64 = char_offset as f64;
                 crate::closure::js_closure_call4(
                     closure_ptr,
+                    4,
                     match_nanboxed,
                     p1,
                     p2,

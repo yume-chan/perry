@@ -331,14 +331,14 @@ pub extern "C" fn js_promise_run_microtasks() -> i32 {
                     let result = if is_fulfilled {
                         let callback = (*promise).on_fulfilled;
                         if !callback.is_null() {
-                            crate::closure::js_closure_call1(callback, value)
+                            crate::closure::js_closure_call1(callback, 1, value)
                         } else {
                             value
                         }
                     } else {
                         let callback = (*promise).on_rejected;
                         if !callback.is_null() {
-                            crate::closure::js_closure_call1(callback, value)
+                            crate::closure::js_closure_call1(callback, 1, value)
                         } else {
                             value
                         }
@@ -675,7 +675,7 @@ pub extern "C" fn js_promise_new_with_executor(executor: *const crate::closure::
     let resolve_f64: f64 = unsafe { std::mem::transmute(resolve_closure as i64) };
     let reject_f64: f64 = unsafe { std::mem::transmute(reject_closure as i64) };
     unsafe {
-        js_closure_call2(executor, resolve_f64, reject_f64);
+        js_closure_call2(executor, 2, resolve_f64, reject_f64);
     }
 
     promise

@@ -475,7 +475,7 @@ pub extern "C" fn js_map_foreach(map: *const MapHeader, callback: f64) {
             let key = ptr::read(entries.add(i * 2));
             let value = ptr::read(entries.add(i * 2 + 1));
             // Call closure with (value, key) - Map.forEach callback signature
-            crate::closure::js_closure_call2(closure_ptr, value, key);
+            crate::closure::js_closure_call2(closure_ptr, 2, value, key);
         }
     }
 }

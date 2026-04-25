@@ -1126,7 +1126,7 @@ pub extern "C" fn js_array_forEach(arr: *const ArrayHeader, callback: *const Clo
             let element = *elements_ptr.add(i);
             // Pass both element and index to match JS forEach(element, index, array) semantics.
             // Using call2 prevents x86_64 SIGSEGV from garbage in the uninitialized index register.
-            js_closure_call2(callback, element, i as f64);
+            js_closure_call2(callback, 2, element, i as f64);
         }
     }
 }
@@ -1150,7 +1150,7 @@ pub extern "C" fn js_array_map(arr: *const ArrayHeader, callback: *const Closure
             // Pass both element and index — JS .map() callback receives (element, index, array).
             // Using call2 ensures the index parameter is defined instead of garbage from registers,
             // which caused SIGSEGV on x86_64 when callbacks used the index (e.g., (_, i) => obj[i]).
-            let mapped = js_closure_call2(callback, element, i as f64);
+            let mapped = js_closure_call2(callback, 2, element, i as f64);
             ptr::write(result_elements.add(i), mapped);
         }
         (*result).length = length;
@@ -1186,7 +1186,7 @@ pub extern "C" fn js_array_sort_with_comparator(arr: *mut ArrayHeader, comparato
                 let key = *elements_ptr.add(i);
                 let mut j = i as isize - 1;
                 while j >= 0 {
-                    let cmp = js_closure_call2(comparator, *elements_ptr.add(j as usize), key);
+                    let cmp = js_closure_call2(comparator, 2, *elements_ptr.add(j as usize), key);
                     if cmp > 0.0 {
                         ptr::write(elements_ptr.add((j + 1) as usize), *elements_ptr.add(j as usize));
                         j -= 1;
@@ -1209,7 +1209,7 @@ pub extern "C" fn js_array_sort_with_comparator(arr: *mut ArrayHeader, comparato
                     let key = *elements_ptr.add(i);
                     let mut j = i as isize - 1;
                     while j >= run_start as isize {
-                        let cmp = js_closure_call2(comparator, *elements_ptr.add(j as usize), key);
+                        let cmp = js_closure_call2(comparator, 2, *elements_ptr.add(j as usize), key);
                         if cmp > 0.0 {
                             ptr::write(elements_ptr.add((j + 1) as usize), *elements_ptr.add(j as usize));
                             j -= 1;
@@ -1240,7 +1240,7 @@ pub extern "C" fn js_array_sort_with_comparator(arr: *mut ArrayHeader, comparato
                     let mut r = mid;
                     let mut k = left;
                     while l < mid && r < right {
-                        let cmp = js_closure_call2(comparator, *src.add(l), *src.add(r));
+                        let cmp = js_closure_call2(comparator, 2, *src.add(l), *src.add(r));
                         if cmp <= 0.0 {
                             *dst.add(k) = *src.add(l);
                             l += 1;
@@ -1294,7 +1294,7 @@ pub extern "C" fn js_array_filter(arr: *const ArrayHeader, callback: *const Clos
 
         for i in 0..length as usize {
             let element = *elements_ptr.add(i);
-            let keep = js_closure_call2(callback, element, i as f64);
+            let keep = js_closure_call2(callback, 2, element, i as f64);
             // Proper truthy check: handles NaN-boxed booleans (TAG_FALSE != 0.0 but is falsy)
             if crate::value::js_is_truthy(keep) != 0 {
                 result = js_array_push_f64(result, element);
@@ -1318,7 +1318,7 @@ pub extern "C" fn js_array_find(arr: *const ArrayHeader, callback: *const Closur
 
         for i in 0..length as usize {
             let element = *elements_ptr.add(i);
-            let result = js_closure_call2(callback, element, i as f64);
+            let result = js_closure_call2(callback, 2, element, i as f64);
             // Proper truthy check: handles NaN-boxed booleans
             if crate::value::js_is_truthy(result) != 0 {
                 return element;
@@ -1342,7 +1342,7 @@ pub extern "C" fn js_array_findIndex(arr: *const ArrayHeader, callback: *const C
 
         for i in 0..length as usize {
             let element = *elements_ptr.add(i);
-            let result = js_closure_call2(callback, element, i as f64);
+            let result = js_closure_call2(callback, 2, element, i as f64);
             // Proper truthy check: handles NaN-boxed booleans
             if crate::value::js_is_truthy(result) != 0 {
                 return i as i32;
@@ -1370,7 +1370,7 @@ pub extern "C" fn js_array_find_last(arr: *const ArrayHeader, callback: *const C
         let elements_ptr = (arr as *const u8).add(std::mem::size_of::<ArrayHeader>()) as *const f64;
         for i in (0..length).rev() {
             let element = *elements_ptr.add(i);
-            let result = js_closure_call2(callback, element, i as f64);
+            let result = js_closure_call2(callback, 2, element, i as f64);
             if crate::value::js_is_truthy(result) != 0 {
                 return element;
             }
@@ -1396,7 +1396,7 @@ pub extern "C" fn js_array_find_last_index(arr: *const ArrayHeader, callback: *c
         let elements_ptr = (arr as *const u8).add(std::mem::size_of::<ArrayHeader>()) as *const f64;
         for i in (0..length).rev() {
             let element = *elements_ptr.add(i);
-            let result = js_closure_call2(callback, element, i as f64);
+            let result = js_closure_call2(callback, 2, element, i as f64);
             if crate::value::js_is_truthy(result) != 0 {
                 return i as i32;
             }
@@ -1459,7 +1459,7 @@ pub extern "C" fn js_array_some(arr: *const ArrayHeader, callback: *const Closur
 
         for i in 0..length as usize {
             let element = *elements_ptr.add(i);
-            let result = js_closure_call2(callback, element, i as f64);
+            let result = js_closure_call2(callback, 2, element, i as f64);
             if crate::value::js_is_truthy(result) != 0 {
                 return f64::from_bits(TAG_TRUE);
             }
@@ -1483,7 +1483,7 @@ pub extern "C" fn js_array_every(arr: *const ArrayHeader, callback: *const Closu
 
         for i in 0..length as usize {
             let element = *elements_ptr.add(i);
-            let result = js_closure_call2(callback, element, i as f64);
+            let result = js_closure_call2(callback, 2, element, i as f64);
             if crate::value::js_is_truthy(result) == 0 {
                 return f64::from_bits(TAG_FALSE);
             }
@@ -1507,7 +1507,7 @@ pub extern "C" fn js_array_flatMap(arr: *const ArrayHeader, callback: *const Clo
 
         for i in 0..length as usize {
             let element = *elements_ptr.add(i);
-            let mapped = js_closure_call2(callback, element, i as f64);
+            let mapped = js_closure_call2(callback, 2, element, i as f64);
             // Check if the mapped value is an array (pointer-tagged)
             let bits = mapped.to_bits();
             let top16 = bits >> 48;
@@ -1566,7 +1566,7 @@ pub extern "C" fn js_array_reduce(
 
         for i in start_idx..length as usize {
             let element = *elements_ptr.add(i);
-            accumulator = js_closure_call2(callback, accumulator, element);
+            accumulator = js_closure_call2(callback, 2, accumulator, element);
         }
 
         accumulator
@@ -1747,7 +1747,7 @@ pub extern "C" fn js_array_reduce_right(
         if start_idx > 0 {
             for i in (0..start_idx).rev() {
                 let element = *elements_ptr.add(i);
-                accumulator = js_closure_call2(callback, accumulator, element);
+                accumulator = js_closure_call2(callback, 2, accumulator, element);
             }
         }
 
@@ -2293,7 +2293,7 @@ pub extern "C" fn js_iterator_to_array(iter_f64: f64) -> *mut ArrayHeader {
 
     for _ in 0..100_000 { // safety limit
         // Call next()
-        let result_f64 = closure::js_closure_call1(next_ptr, f64::from_bits(TAG_UNDEFINED));
+        let result_f64 = closure::js_closure_call1(next_ptr, 1, f64::from_bits(TAG_UNDEFINED));
         let result_ptr = js_nanbox_get_pointer(result_f64);
         if result_ptr == 0 { break; }
         let result_obj = result_ptr as *const ObjectHeader;

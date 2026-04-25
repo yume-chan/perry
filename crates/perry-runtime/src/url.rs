@@ -896,7 +896,7 @@ fn fire_abort_listeners(signal: *mut ObjectHeader) {
                 continue;
             };
             if !cb_ptr.is_null() {
-                crate::closure::js_closure_call0(cb_ptr);
+                crate::closure::js_closure_call0(cb_ptr, 0);
             }
         }
     }

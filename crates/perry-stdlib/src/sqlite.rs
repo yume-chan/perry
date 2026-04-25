@@ -421,7 +421,7 @@ unsafe extern "C" fn sqlite_tx_wrapper(
     js_sqlite_begin_transaction(db_handle);
 
     // Call original closure with argument
-    let result = js_closure_call1(original_closure, arg0);
+    let result = js_closure_call1(original_closure, 1, arg0);
 
     // COMMIT
     js_sqlite_commit(db_handle);

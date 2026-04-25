@@ -921,7 +921,7 @@ pub extern "C" fn js_headers_for_each(handle: f64, callback: f64) -> f64 {
         let v_nan = JSValue::string_ptr(v_ptr).bits();
         let k_nan = JSValue::string_ptr(k_ptr).bits();
         unsafe {
-            perry_runtime::js_closure_call2(closure, f64::from_bits(v_nan), f64::from_bits(k_nan));
+            perry_runtime::js_closure_call2(closure, 2, f64::from_bits(v_nan), f64::from_bits(k_nan));
         }
     }
     f64::from_bits(TAG_UNDEFINED)

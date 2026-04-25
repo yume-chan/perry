@@ -2317,7 +2317,7 @@ pub extern "C" fn js_drain_queued_microtasks() {
         });
         match task {
             Some(cb) => unsafe {
-                js_closure_call0(cb as *const crate::closure::ClosureHeader);
+                js_closure_call0(cb as *const crate::closure::ClosureHeader, 0);
             },
             None => break,
         }

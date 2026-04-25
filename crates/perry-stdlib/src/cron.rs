@@ -189,7 +189,7 @@ pub extern "C" fn js_cron_timer_tick() -> i32 {
             // SAFETY: closure pointers come from compiled Perry code that
             // owns the closure for the entire program lifetime, and callbacks
             // are GC-rooted via `scan_cron_roots`.
-            js_closure_call0(callback as *const ClosureHeader);
+            js_closure_call0(callback as *const ClosureHeader, 0);
             fired += 1;
         }
     }

@@ -129,7 +129,7 @@ pub unsafe extern "C" fn js_event_emitter_emit(
             for callback_ptr in listeners_copy {
                 if callback_ptr != 0 {
                     let closure_ptr = callback_ptr as *const ClosureHeader;
-                    js_closure_call1(closure_ptr, arg);
+                    js_closure_call1(closure_ptr, 1, arg);
                 }
             }
 
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn js_event_emitter_emit0(
             for callback_ptr in listeners_copy {
                 if callback_ptr != 0 {
                     let closure_ptr = callback_ptr as *const ClosureHeader;
-                    js_closure_call0(closure_ptr);
+                    js_closure_call0(closure_ptr, 0);
                 }
             }
 

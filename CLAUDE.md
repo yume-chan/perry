@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.148
+**Current Version:** 0.5.149
 
 ## TypeScript Parity Status
 
@@ -161,6 +161,8 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 ## Recent Changes
 
 Keep entries to 1-2 lines max. Full details in CHANGELOG.md.
+
+- **v0.5.149** — Extend closure arity tracking and parameter filling to all js_closure_callN functions (2–16). Problem: when functions with optional parameters were called as closures, js_closure_call0/1 transmitted correctly based on arity but call2–call16 assumed exact-match signatures, causing SIGSEGV when wrapper needed more parameters than caller provided. Solution: (1) updated js_closure_call0/1 from transmuting to fixed 2-param signature to matching on arity (0–16+) with explicit transmutes per arity, (2) generated all call2–call16 with same arity-aware logic using Python script to avoid copy-paste, (3) also fixed direct FuncRef calls in lower_call.rs to fill missing parameters with TAG_UNDEFINED when args.len() < declared_count. All three call paths (js_closure_callN, direct FuncRef, wrapper function) now handle optional parameters consistently. Tests: `closure-wrong-type.ts` all three lines output "42" ✅
 
 - **v0.5.148** — Fix module-level IIFEs to use scope objects instead of boxed_vars system. Root cause: module-level closures (e.g. `const f = (() => { let count = 0; return () => ++count; })()`) had `enclosing_func_id: None`, preventing scope object use. Solution: (1) generate capture analysis for module-level closures in `populate_closures_in_expr`, (2) allow scope allocation in closure bodies when `scope_capture_analysis` is present (not just for regular functions), (3) skip boxing for variables in scopes, (4) propagate outer closure analysis through nested closures via `_with_outer` variants to prevent inner closures from generating their own analysis. Module-level IIFEs now use scope objects; verified: zero box operations, correct counter semantics (f() → 1, 2, 3, ...).
 

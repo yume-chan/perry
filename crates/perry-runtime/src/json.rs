@@ -830,7 +830,7 @@ unsafe fn object_get_to_json(ptr: *const u8) -> Option<f64> {
                     // Call toJSON() with no arguments (pass empty string key per spec)
                     let empty_str = js_string_from_bytes(b"".as_ptr(), 0);
                     let key_f64_arg = f64::from_bits(STRING_TAG | (empty_str as u64 & POINTER_MASK));
-                    let result = crate::js_closure_call1(closure_ptr, key_f64_arg);
+                    let result = crate::js_closure_call1(closure_ptr, 1, key_f64_arg);
                     return Some(result);
                 }
             }
@@ -1761,7 +1761,7 @@ unsafe fn call_replacer(
     key_f64: f64,
     value_f64: f64,
 ) -> f64 {
-    crate::js_closure_call2(replacer, key_f64, value_f64)
+    crate::js_closure_call2(replacer, 2, key_f64, value_f64)
 }
 
 /// NaN-box a string pointer as f64 (STRING_TAG)
@@ -2734,7 +2734,7 @@ unsafe fn apply_reviver(value: JSValue, key_f64: f64, reviver: *const crate::clo
 
     // Now call reviver on this value
     let value_f64 = f64::from_bits(value.bits());
-    let result = crate::js_closure_call2(reviver, key_f64, value_f64);
+    let result = crate::js_closure_call2(reviver, 2, key_f64, value_f64);
     JSValue::from_bits(result.to_bits())
 }
 

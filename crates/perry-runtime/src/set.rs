@@ -421,7 +421,7 @@ pub extern "C" fn js_set_foreach(set: *const SetHeader, callback: f64) {
         for i in 0..size {
             let value = ptr::read(elements.add(i));
             // Call closure with (value, value) - Set.forEach callback gets (value, value) in JS
-            crate::closure::js_closure_call2(closure_ptr, value, value);
+            crate::closure::js_closure_call2(closure_ptr, 2, value, value);
         }
     }
 }

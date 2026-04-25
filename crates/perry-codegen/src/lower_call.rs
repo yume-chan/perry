@@ -8,6 +8,7 @@ use perry_types::Type as HirType;
 
 use crate::expr::{lower_expr, nanbox_pointer_inline, nanbox_string_inline, unbox_to_i64, variant_name, FnCtx};
 use crate::lower_array_method::lower_array_method;
+use crate::nanbox::TAG_UNDEFINED;
 
 /// Heuristic: is this expression likely an integer handle (pointer value
 /// stored as a number) rather than a real float? Used for extern C FFI
@@ -35,7 +36,7 @@ fn is_integer_handle_arg(expr: &Expr) -> bool {
     }
 }
 use crate::lower_string_method::lower_string_method;
-use crate::nanbox::{double_literal, POINTER_MASK_I64};
+use crate::nanbox::{double_literal, POINTER_MASK_I64, TAG_UNDEFINED_I64};
 use crate::type_analysis::{is_array_expr, is_map_expr, is_promise_expr, is_set_expr, is_string_expr, receiver_class_name};
 use crate::types::{DOUBLE, I32, I64, I8, PTR};
 
@@ -104,8 +105,9 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
             let blk = ctx.block();
             let closure_handle = unbox_to_i64(blk, &recv_box);
             let runtime_fn = format!("js_closure_call{}", effective_args.len());
+            let param_count = (effective_args.len() as i32).to_string();
             let mut call_args: Vec<(crate::types::LlvmType, &str)> =
-                vec![(I64, &closure_handle)];
+                vec![(I64, &closure_handle), (I32, &param_count)];
             for v in &effective_args {
                 call_args.push((DOUBLE, v.as_str()));
             }
@@ -157,6 +159,10 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
         } else {
             for a in args {
                 lowered.push(lower_expr(ctx, a)?);
+            }
+            // Fill in missing parameters with TAG_UNDEFINED
+            while lowered.len() < declared_count {
+                lowered.push(double_literal(f64::from_bits(TAG_UNDEFINED)));
             }
         }
         let arg_slices: Vec<(crate::types::LlvmType, &str)> =
@@ -1772,7 +1778,9 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
         let blk = ctx.block();
         let closure_handle = unbox_to_i64(blk, &recv_box);
         let runtime_fn = format!("js_closure_call{}", args.len());
-        let mut call_args: Vec<(crate::types::LlvmType, &str)> = vec![(I64, &closure_handle)];
+        let param_count = (args.len() as i32).to_string();
+        let mut call_args: Vec<(crate::types::LlvmType, &str)> = 
+            vec![(I64, &closure_handle), (I32, &param_count)];
         for v in &lowered_args {
             call_args.push((DOUBLE, v.as_str()));
         }

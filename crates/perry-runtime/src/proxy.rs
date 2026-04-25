@@ -249,7 +249,7 @@ pub extern "C" fn js_proxy_get(proxy_boxed: f64, key: f64) -> f64 {
     let trap = handler_trap(handler, "get");
     if is_callable(trap) {
         unsafe {
-            return js_closure_call2(closure_from(trap), target, key);
+            return js_closure_call2(closure_from(trap), 2, target, key);
         }
     }
     // No get trap — forward to target.
@@ -309,7 +309,7 @@ pub extern "C" fn js_proxy_set(proxy_boxed: f64, key: f64, value: f64) -> f64 {
     let trap = handler_trap(handler, "set");
     if is_callable(trap) {
         unsafe {
-            let _ = js_closure_call3(closure_from(trap), target, key, value);
+            let _ = js_closure_call3(closure_from(trap), 3, target, key, value);
         }
         return f64::from_bits(TAG_TRUE);
     }
@@ -354,7 +354,7 @@ pub extern "C" fn js_proxy_has(proxy_boxed: f64, key: f64) -> f64 {
     let trap = handler_trap(handler, "has");
     if is_callable(trap) {
         unsafe {
-            return js_closure_call2(closure_from(trap), target, key);
+            return js_closure_call2(closure_from(trap), 2, target, key);
         }
     }
     crate::object::js_object_has_property(target, key)
@@ -385,7 +385,7 @@ pub extern "C" fn js_proxy_delete(proxy_boxed: f64, key: f64) -> f64 {
     let trap = handler_trap(handler, "deleteProperty");
     if is_callable(trap) {
         unsafe {
-            let _ = js_closure_call2(closure_from(trap), target, key);
+            let _ = js_closure_call2(closure_from(trap), 2, target, key);
         }
         return f64::from_bits(TAG_TRUE);
     }
@@ -426,7 +426,7 @@ pub extern "C" fn js_proxy_apply(proxy_boxed: f64, this_arg: f64, args_array: f6
     let trap = handler_trap(handler, "apply");
     if is_callable(trap) {
         unsafe {
-            let trap_result = js_closure_call3(closure_from(trap), target, this_arg, args_array);
+            let trap_result = js_closure_call3(closure_from(trap), 3, target, this_arg, args_array);
             // Pragmatic fallback: if the trap returns undefined (because
             // the user wrote `return target.apply(thisArg, args)` which
             // Perry doesn't yet support on closures) OR returns the
@@ -471,11 +471,11 @@ pub(crate) fn call_with_args_array(callee: f64, args_array: f64) -> f64 {
             return f64::from_bits(TAG_UNDEFINED);
         }
         match len {
-            0 => js_closure_call0(closure),
-            1 => js_closure_call1(closure, a(0)),
-            2 => js_closure_call2(closure, a(0), a(1)),
-            3 => js_closure_call3(closure, a(0), a(1), a(2)),
-            _ => crate::closure::js_closure_call4(closure, a(0), a(1), a(2), a(3)),
+            0 => js_closure_call0(closure, 0),
+            1 => js_closure_call1(closure, 1, a(0)),
+            2 => js_closure_call2(closure, 2, a(0), a(1)),
+            3 => js_closure_call3(closure, 3, a(0), a(1), a(2)),
+            _ => crate::closure::js_closure_call4(closure, 4, a(0), a(1), a(2), a(3)),
         }
     }
 }
@@ -509,7 +509,7 @@ pub extern "C" fn js_proxy_construct(
     let trap = handler_trap(handler, "construct");
     if is_callable(trap) {
         unsafe {
-            return js_closure_call2(closure_from(trap), target, args_array);
+            return js_closure_call2(closure_from(trap), 2, target, args_array);
         }
     }
     // Fallback: the target is a class — forward via callee (the compiler's

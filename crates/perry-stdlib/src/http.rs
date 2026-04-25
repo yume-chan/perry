@@ -822,7 +822,7 @@ pub unsafe extern "C" fn js_http_process_pending() -> i32 {
                     let handle_f64 = f64::from_bits(
                         0x7FFD_0000_0000_0000u64 | (incoming_handle as u64 & 0x0000_FFFF_FFFF_FFFF)
                     );
-                    js_closure_call1(closure_ptr, handle_f64);
+                    js_closure_call1(closure_ptr, 1, handle_f64);
                 }
 
                 // After the response callback has returned, data/end listeners
@@ -849,7 +849,7 @@ pub unsafe extern "C" fn js_http_process_pending() -> i32 {
                     for cb in data_listeners {
                         if cb != 0 {
                             let closure = cb as *const ClosureHeader;
-                            js_closure_call1(closure, body_f64);
+                            js_closure_call1(closure, 1, body_f64);
                         }
                     }
                 }
@@ -865,7 +865,7 @@ pub unsafe extern "C" fn js_http_process_pending() -> i32 {
                 for cb in end_listeners {
                     if cb != 0 {
                         let closure = cb as *const ClosureHeader;
-                        js_closure_call0(closure);
+                        js_closure_call0(closure, 0);
                     }
                 }
             }
@@ -895,7 +895,7 @@ pub unsafe extern "C" fn js_http_process_pending() -> i32 {
                     for cb in error_listeners {
                         if cb != 0 {
                             let closure = cb as *const ClosureHeader;
-                            js_closure_call1(closure, err_f64);
+                            js_closure_call1(closure, 1, err_f64);
                         }
                     }
                 }

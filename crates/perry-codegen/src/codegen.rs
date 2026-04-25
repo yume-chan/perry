@@ -40,7 +40,7 @@ use crate::runtime_decls;
 use crate::scope_objects;
 use crate::stmt;
 use crate::strings::StringPool;
-use crate::types::{DOUBLE, I32, I64, LlvmType, PTR, VOID};
+use crate::types::{DOUBLE, I1, I32, I64, LlvmType, PTR, VOID};
 
 /// Options controlling code generation for a single module.
 #[derive(Debug, Clone, Default)]
@@ -1465,9 +1465,9 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
 
     // Emit FuncRef-as-value wrappers. For each user function, generate
     // a thin wrapper `__perry_wrap_<name>` whose signature matches the
-    // closure-call ABI: `double(i64 this_closure, double arg0, double
+    // closure-call ABI: `double(i64 this_closure, i32 param_count, double arg0, double
     // arg1, ...)`. The wrapper discards the closure pointer and forwards
-    // the args to the underlying function.
+    // the args to the underlying function, filling missing optional parameters with undefined.
     //
     // The wrapper exists so that `apply(add, 3, 4)` can pass `add` as
     // a value and have `apply` call it via `js_closure_call2`. Without
@@ -1489,11 +1489,11 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             // Already emitted wrapper + static closure for this name; skip.
             continue;
         }
-        // Wrapper signature: i64 closure_ptr + N doubles for args.
+        // Wrapper signature: i64 closure_ptr + i32 param_count + N doubles for args.
         // Cap at 16 since js_closure_call only goes up to 16 args.
         let arity = f.params.len().min(16);
         let mut wrap_params: Vec<(LlvmType, String)> =
-            vec![(I64, "%this_closure".to_string())];
+            vec![(I64, "%this_closure".to_string()), (I32, "%param_count".to_string())];
         for i in 0..arity {
             wrap_params.push((DOUBLE, format!("%a{}", i)));
         }
@@ -1501,20 +1501,73 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         let wf = llmod.define_function(&wrap_name, DOUBLE, wrap_params);
         let _ = wf.create_block("entry");
         let blk = wf.block_mut(0).unwrap();
-        // Call the underlying function with just the arg doubles.
-        let call_args: Vec<(LlvmType, &str)> = (0..arity)
-            .map(|i| (DOUBLE, if i == 0 { "%a0" } else if i == 1 { "%a1" }
-                else if i == 2 { "%a2" } else if i == 3 { "%a3" } else { "%a4" }))
+        
+        // Build call args: for each parameter, check if param_count > i; 
+        // if yes, use %ai; otherwise use the default value or undefined
+        let arg_names = vec!["%a0", "%a1", "%a2", "%a3", "%a4", "%a5", "%a6", "%a7", 
+                             "%a8", "%a9", "%a10", "%a11", "%a12", "%a13", "%a14", "%a15"];
+        
+        let mut call_args: Vec<(LlvmType, String)> = Vec::new();
+        for i in 0..arity {
+            // Compare param_count > i
+            let param_idx_lit = format!("{}", i as i32);
+            let cmp_result = blk.icmp_sgt(I32, "%param_count", &param_idx_lit);
+            let arg_val = arg_names[i];
+            
+            // Determine default value for this parameter
+            let default_val = if i < f.params.len() {
+                let p = &f.params[i];
+                if let Some(default_expr) = &p.default {
+                    match default_expr {
+                        perry_hir::Expr::Number(n) => {
+                            crate::nanbox::double_literal(*n)
+                        },
+                        perry_hir::Expr::Integer(i) => {
+                            crate::nanbox::double_literal(*i as f64)
+                        },
+                        perry_hir::Expr::Bool(b) => {
+                            if *b {
+                                crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_TRUE))
+                            } else {
+                                crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_FALSE))
+                            }
+                        },
+                        perry_hir::Expr::Undefined => {
+                            crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
+                        },
+                        perry_hir::Expr::Null => {
+                            crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_NULL))
+                        },
+                        _ => {
+                            // For complex default expressions, use undefined as placeholder
+                            crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
+                        }
+                    }
+                } else {
+                    crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
+                }
+            } else {
+                crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
+            };
+            
+            let selected_val = blk.select(I1, &cmp_result, DOUBLE, arg_val, &default_val);
+            call_args.push((DOUBLE, selected_val));
+        }
+        
+        // Now call the underlying function with the potentially-filled arguments
+        let call_args_refs: Vec<(LlvmType, &str)> = call_args.iter()
+            .map(|(ty, val)| (*ty, val.as_str()))
             .collect();
-        let result = blk.call(DOUBLE, &original_name, &call_args);
+        let result = blk.call(DOUBLE, &original_name, &call_args_refs);
         blk.ret(DOUBLE, &result);
         // Emit a static ClosureHeader constant `__perry_static_closure_<name>`
         // so that `Expr::FuncRef(id)` can return its address rather than
         // allocating a fresh closure object on every access.  Two reads of
         // the same named function therefore compare equal — the
         // JavaScript-correct behaviour.  The layout matches `perry-runtime`
-        // `ClosureHeader`: { func_ptr: *u8, capture_count: u32, type_tag: u32 }
+        // `ClosureHeader`: { func_ptr: *u8, capture_count: u32, type_tag: u32, arity: i32, padding: i32 }
         // with type_tag = CLOSURE_MAGIC = 0x434C4F53 = 1129074515.
+        // The padding field is for LLVM/Rust alignment.
         //
         // All closures are emitted with external linkage. While non-exported
         // closures could use internal linkage for better dead-code elimination,
@@ -1523,9 +1576,10 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         // which aren't in hir.functions but may be imported by other modules.
         // The linker will still optimize away unused symbols.
         let static_closure_name = format!("__perry_static_closure_{}", original_name);
-        let init = format!("{{ ptr @{}, i32 0, i32 1129074515 }}", wrap_name);
+        let arity_str = f.params.len().min(16).to_string();
+        let init = format!("{{ ptr @{}, i32 0, i32 1129074515, i32 {}, i32 0 }}", wrap_name, arity_str);
         llmod.add_raw_global(format!(
-            "@{} = constant {{ ptr, i32, i32 }} {}",
+            "@{} = constant {{ ptr, i32, i32, i32, i32 }} {}",
             static_closure_name, init
         ));
     }
@@ -1860,10 +1914,11 @@ fn compile_closure(
 
     let llvm_name = format!("perry_closure_{}__{}", module_prefix, func_id);
 
-    // Param list: i64 this_closure, then each param as double.
+    // Param list: i64 this_closure, i32 param_count, then each param as double.
     let mut llvm_params: Vec<(LlvmType, String)> =
-        Vec::with_capacity(params.len() + 1);
+        Vec::with_capacity(params.len() + 2);
     llvm_params.push((I64, "%this_closure".to_string()));
+    llvm_params.push((I32, "%param_count".to_string()));
     for p in params {
         llvm_params.push((DOUBLE, format!("%arg{}", p.id)));
     }
@@ -1878,9 +1933,52 @@ fn compile_closure(
     let locals: HashMap<u32, String> = {
         let blk = lf.block_mut(0).unwrap();
         let mut map = HashMap::new();
-        for p in params {
+        for (i, p) in params.iter().enumerate() {
             let slot = blk.alloca(DOUBLE);
-            blk.store(DOUBLE, &format!("%arg{}", p.id), &slot);
+            // If param_count (i32) indicates this param was provided (i < param_count),
+            // store the passed value. Otherwise, use default or undefined.
+            let param_idx_lit = format!("{}", i as i32);
+            
+            // Generate: if (param_count > i) use %arg{p.id}, else use default or undefined
+            // %is_provided = icmp sgt i32 %param_count, i32 {i}
+            let cmp_result = blk.icmp_sgt(I32, "%param_count", &param_idx_lit);
+            let arg_val = format!("%arg{}", p.id);
+            
+            // Determine the default value for this parameter
+            let default_val = if let Some(default_expr) = &p.default {
+                match default_expr {
+                    perry_hir::Expr::Number(n) => {
+                        crate::nanbox::double_literal(*n)
+                    },
+                    perry_hir::Expr::Integer(i) => {
+                        crate::nanbox::double_literal(*i as f64)
+                    },
+                    perry_hir::Expr::Bool(b) => {
+                        if *b {
+                            crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_TRUE))
+                        } else {
+                            crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_FALSE))
+                        }
+                    },
+                    perry_hir::Expr::Undefined => {
+                        crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
+                    },
+                    perry_hir::Expr::Null => {
+                        crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_NULL))
+                    },
+                    _ => {
+                        // For complex default expressions, we can't use select.
+                        // TODO: implement proper conditional branching for complex defaults
+                        // For now, use undefined as a placeholder.
+                        crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
+                    }
+                }
+            } else {
+                crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
+            };
+            
+            let selected_val = blk.select(I1, &cmp_result, DOUBLE, &arg_val, &default_val);
+            blk.store(DOUBLE, &selected_val, &slot);
             map.insert(p.id, slot);
         }
         map
