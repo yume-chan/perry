@@ -835,7 +835,6 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 let_ids.entry(*id).or_insert_with(Vec::new).push((name.clone(), stmt_idx));
             }
         }
-        eprintln!("[DEBUG] Module {} has {} init statements, {} are Let", &hir.name, hir.init.len(), let_count);
         for (id, entries) in &let_ids {
             if entries.len() > 1 {
                 let names: Vec<String> = entries.iter().map(|(n, _)| n.clone()).collect();
@@ -879,7 +878,6 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 // linkage, the optimizer can't make cross-TU assumptions.
                 // The module-unique name (perry_global_<prefix>__N)
                 // prevents symbol collisions across modules.
-                eprintln!("[DEBUG] Adding global {} (ID {}) to module {}", &global_name, id, &hir.name);
                 llmod.add_global(&global_name, DOUBLE, &init_value);
                 module_globals.insert(*id, global_name.clone());
 

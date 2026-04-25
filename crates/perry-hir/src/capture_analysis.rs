@@ -350,12 +350,12 @@ impl CaptureAnalyzer {
             // Collections
             Expr::Object(pairs) => {
                 for (_, e) in pairs {
-                    self.walk_expr_generic(e);
+                    self.walk_expr(e);  // Use walk_expr to handle closures
                 }
             }
             Expr::Array(exprs) => {
                 for e in exprs {
-                    self.walk_expr_generic(e);
+                    self.walk_expr(e);  // Use walk_expr to handle closures
                 }
             }
             
@@ -698,6 +698,64 @@ impl CaptureAnalyzer {
                     self.walk_expr_generic(e);
                 }
             }
+            
+            // Update expressions (++/--) - must mark the variable as captured
+            Expr::Update { id, .. } => self.mark_variable_captured(*id),
+            
+            // Array mutation operations - mark the array variable as captured
+            Expr::ArrayPush { array_id, value } => {
+                self.mark_variable_captured(*array_id);
+                self.walk_expr_generic(value);
+            }
+            Expr::ArrayPushSpread { array_id, source } => {
+                self.mark_variable_captured(*array_id);
+                self.walk_expr_generic(source);
+            }
+            Expr::ArrayUnshift { array_id, value } => {
+                self.mark_variable_captured(*array_id);
+                self.walk_expr_generic(value);
+            }
+            Expr::ArraySplice { array_id, start, delete_count, items } => {
+                self.mark_variable_captured(*array_id);
+                self.walk_expr_generic(start);
+                if let Some(dc) = delete_count {
+                    self.walk_expr_generic(dc);
+                }
+                for item in items {
+                    self.walk_expr_generic(item);
+                }
+            }
+            Expr::ArrayCopyWithin { array_id, target, start, end } => {
+                self.mark_variable_captured(*array_id);
+                self.walk_expr_generic(target);
+                self.walk_expr_generic(start);
+                if let Some(e) = end {
+                    self.walk_expr_generic(e);
+                }
+            }
+            
+            // Set mutation operations
+            Expr::SetAdd { set_id, value } => {
+                self.mark_variable_captured(*set_id);
+                self.walk_expr_generic(value);
+            }
+            Expr::SetDelete { set, value } => {
+                self.walk_expr_generic(set);
+                self.walk_expr_generic(value);
+            }
+            Expr::SetClear(set) => self.walk_expr_generic(set),
+            
+            // Map mutation operations - these are Box<Expr> not LocalIds
+            Expr::MapSet { map, key, value } => {
+                self.walk_expr_generic(map);
+                self.walk_expr_generic(key);
+                self.walk_expr_generic(value);
+            }
+            Expr::MapDelete { map, key } => {
+                self.walk_expr_generic(map);
+                self.walk_expr_generic(key);
+            }
+            Expr::MapClear(map) => self.walk_expr_generic(map),
             
             // All other variants (literals, constants, etc.)
             _ => {

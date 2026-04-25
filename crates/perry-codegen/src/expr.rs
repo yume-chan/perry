@@ -3003,6 +3003,8 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             mutable_captures,
             captures_this,
             is_async,
+            enclosing_scope_capture_analysis,
+            scope_capture_analysis,
             ..
         } => {
             // captures_this used to be a hard error here. Phase H.3
@@ -3060,15 +3062,22 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             let mut use_scope_objects = false;
             
             // Check if we should use scope objects
-            // First, collect scope info while we have an immutable borrow of ctx
-            let scopes_to_load: Vec<(perry_hir::ScopeId, String)> = if let Some(analysis) = &ctx.scope_capture_analysis {
+            // Use the closure's enclosing_scope_capture_analysis to determine where captures come from
+            let scopes_to_load: Vec<(perry_hir::ScopeId, String)> = if let Some(analysis) = enclosing_scope_capture_analysis.as_ref() {
                 let mut scopes_found: std::collections::BTreeMap<perry_hir::ScopeId, String> = 
                     std::collections::BTreeMap::new();
                 
                 for cap_id in &auto_captures {
                     if let Some((scope_id, _)) = crate::scope_objects::get_scope_and_index(*cap_id, analysis) {
                         if !scopes_found.contains_key(&scope_id) {
-                            if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
+                            // For nested closures in closure bodies, check closure_scope_indices first
+                            if let Some(closure_capture_idx) = ctx.closure_scope_indices.get(&scope_id).copied() {
+                                // Scope pointer comes from our closure's captures
+                                // We'll load it via js_closure_get_capture_ptr inside the body
+                                // For now, use a placeholder that indicates this scope comes from closure captures
+                                scopes_found.insert(scope_id, format!("[closure_capture_{}]", closure_capture_idx));
+                            } else if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
+                                // Scope pointer is available in the current function context
                                 scopes_found.insert(scope_id, scope_ptr_slot);
                             }
                         }
@@ -3083,9 +3092,25 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // Now load the scope pointers (can mutable borrow ctx now that analysis borrow is released)
             if !scopes_to_load.is_empty() {
                 use_scope_objects = true;
-                for (scope_id, scope_ptr_slot) in scopes_to_load.iter() {
-                    let scope_ptr = ctx.block().load(crate::types::I64, scope_ptr_slot);
-                    captured_values.push(scope_ptr);
+                for (scope_id, scope_ptr_slot_or_marker) in scopes_to_load.iter() {
+                    // If this is a closure capture marker, load from the current closure's captures
+                    if scope_ptr_slot_or_marker.starts_with("[closure_capture_") {
+                        if let Some(closure_ptr) = &ctx.current_closure_ptr.clone() {
+                            let marker = &scope_ptr_slot_or_marker[17..scope_ptr_slot_or_marker.len()-1]; // Extract capture index
+                            let closure_capture_idx: usize = marker.parse().unwrap_or(0);
+                            let blk = ctx.block();
+                            let scope_ptr = blk.call(
+                                crate::types::I64,
+                                "js_closure_get_capture_ptr",
+                                &[(crate::types::I64, closure_ptr), (I32, &closure_capture_idx.to_string())],
+                            );
+                            captured_values.push(scope_ptr);
+                        }
+                    } else {
+                        // Regular function context - load from stack slot
+                        let scope_ptr = ctx.block().load(crate::types::I64, scope_ptr_slot_or_marker);
+                        captured_values.push(scope_ptr);
+                    }
                 }
             } else {
             }
