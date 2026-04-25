@@ -1,7 +1,14 @@
-function a(b:string){
-    var b:string;
+function a(v: string) {
+  var v: string;
 
-    console.log(b);
+  console.log(v);
+}
+
+function b(v: string) {
+  var v: string = 'World';
+
+  console.log(v);
 }
 
 a("Hello");
+b("Hello");

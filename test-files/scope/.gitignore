@@ -1,4 +1,7 @@
 branch
 fake-var
 not-closure
+recursive
+shared
+global
 ll

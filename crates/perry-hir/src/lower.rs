@@ -8,6 +8,7 @@ use swc_ecma_ast as ast;
 use std::collections::{HashMap, HashSet};
 
 use crate::ir::*;
+use crate::scope::CaptureAnalysis;
 
 /// Context for lowering, tracks variable bindings
 pub struct LoweringContext {
@@ -2465,58 +2466,73 @@ fn populate_enclosing_scope_capture_analysis(module: &mut Module) {
         }
     }
 
+    // Also process module-level init statements (for module-level IIFEs and closures)
+    populate_closures_in_stmts(&mut module.init, &func_map);
+
 }
 
 fn populate_closures_in_stmts(stmts: &mut [Stmt], func_map: &std::collections::HashMap<FuncId, *const Function>) {
+    populate_closures_in_stmts_with_outer(stmts, func_map, None);
+}
+
+fn populate_closures_in_stmts_with_outer(stmts: &mut [Stmt], func_map: &std::collections::HashMap<FuncId, *const Function>, outer_closure_analysis: Option<&Box<CaptureAnalysis>>) {
     for stmt in stmts {
-        populate_closures_in_stmt(stmt, func_map);
+        populate_closures_in_stmt_with_outer(stmt, func_map, outer_closure_analysis);
     }
 }
 
 fn populate_closures_in_stmt(stmt: &mut Stmt, func_map: &std::collections::HashMap<FuncId, *const Function>) {
+    populate_closures_in_stmt_with_outer(stmt, func_map, None);
+}
+
+fn populate_closures_in_stmt_with_outer(stmt: &mut Stmt, func_map: &std::collections::HashMap<FuncId, *const Function>, outer_closure_analysis: Option<&Box<CaptureAnalysis>>) {
     match stmt {
-        Stmt::Let { init: Some(expr), .. } => populate_closures_in_expr(expr, func_map),
-        Stmt::Expr(expr) => populate_closures_in_expr(expr, func_map),
-        Stmt::Return(Some(expr)) => populate_closures_in_expr(expr, func_map),
-        Stmt::Throw(expr) => populate_closures_in_expr(expr, func_map),
+        Stmt::Let { init: Some(expr), .. } => populate_closures_in_expr_with_outer(expr, func_map, outer_closure_analysis),
+        Stmt::Expr(expr) => populate_closures_in_expr_with_outer(expr, func_map, outer_closure_analysis),
+        Stmt::Return(Some(expr)) => populate_closures_in_expr_with_outer(expr, func_map, outer_closure_analysis),
+        Stmt::Throw(expr) => populate_closures_in_expr_with_outer(expr, func_map, outer_closure_analysis),
         Stmt::If { condition, then_branch, else_branch } => {
-            populate_closures_in_expr(condition, func_map);
-            populate_closures_in_stmts(then_branch, func_map);
+            populate_closures_in_expr_with_outer(condition, func_map, outer_closure_analysis);
+            populate_closures_in_stmts_with_outer(then_branch, func_map, outer_closure_analysis);
             if let Some(else_stmts) = else_branch {
-                populate_closures_in_stmts(else_stmts, func_map);
+                populate_closures_in_stmts_with_outer(else_stmts, func_map, outer_closure_analysis);
             }
         }
         Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
-            populate_closures_in_expr(condition, func_map);
-            populate_closures_in_stmts(body, func_map);
+            populate_closures_in_expr_with_outer(condition, func_map, outer_closure_analysis);
+            populate_closures_in_stmts_with_outer(body, func_map, outer_closure_analysis);
         }
         Stmt::For { init, condition, update, body } => {
             if let Some(init_stmt) = init {
-                populate_closures_in_stmt(init_stmt, func_map);
+                populate_closures_in_stmt_with_outer(init_stmt, func_map, outer_closure_analysis);
             }
             if let Some(e) = condition {
-                populate_closures_in_expr(e, func_map);
+                populate_closures_in_expr_with_outer(e, func_map, outer_closure_analysis);
             }
             if let Some(e) = update {
-                populate_closures_in_expr(e, func_map);
+                populate_closures_in_expr_with_outer(e, func_map, outer_closure_analysis);
             }
-            populate_closures_in_stmts(body, func_map);
+            populate_closures_in_stmts_with_outer(body, func_map, outer_closure_analysis);
         }
         Stmt::Try { body, catch, finally } => {
-            populate_closures_in_stmts(body, func_map);
+            populate_closures_in_stmts_with_outer(body, func_map, outer_closure_analysis);
             if let Some(catch_clause) = catch {
-                populate_closures_in_stmts(&mut catch_clause.body, func_map);
+                populate_closures_in_stmts_with_outer(&mut catch_clause.body, func_map, outer_closure_analysis);
             }
             if let Some(finally_stmts) = finally {
-                populate_closures_in_stmts(finally_stmts, func_map);
+                populate_closures_in_stmts_with_outer(finally_stmts, func_map, outer_closure_analysis);
             }
         }
-        Stmt::Labeled { body, .. } => populate_closures_in_stmt(body, func_map),
+        Stmt::Labeled { body, .. } => populate_closures_in_stmt_with_outer(body, func_map, outer_closure_analysis),
         _ => {}
     }
 }
 
 fn populate_closures_in_expr(expr: &mut Expr, func_map: &std::collections::HashMap<FuncId, *const Function>) {
+    populate_closures_in_expr_with_outer(expr, func_map, None);
+}
+
+fn populate_closures_in_expr_with_outer(expr: &mut Expr, func_map: &std::collections::HashMap<FuncId, *const Function>, outer_closure_analysis: Option<&Box<CaptureAnalysis>>) {
     match expr {
         Expr::Closure { ref mut enclosing_scope_capture_analysis, enclosing_func_id, body, .. } => {
             // If this closure has an enclosing function, look it up and copy its scope_capture_analysis
@@ -2532,104 +2548,118 @@ fn populate_closures_in_expr(expr: &mut Expr, func_map: &std::collections::HashM
                     }
                 } else {
                 }
+            } else if let Some(outer_analysis) = outer_closure_analysis {
+                // Nested inside another closure - use outer closure's scope analysis
+                *enclosing_scope_capture_analysis = Some(Box::new(outer_analysis.as_ref().clone()));
             } else {
+                // Module-level closure (enclosing_func_id is None, not nested in another closure)
+                // Generate its own capture analysis instead of using boxed_vars fallback
+                let all_locals = Vec::new(); // Module-level closures have no captured enclosing locals
+                let analysis = crate::capture_analysis::analyze_captures(body, &all_locals);
+                *enclosing_scope_capture_analysis = Some(Box::new(analysis));
             }
 
             // Recurse into the closure body to process any nested closures
-            populate_closures_in_stmts(body, func_map);
+            // Pass this closure's scope_capture_analysis (if available) to nested closures
+            let nested_analysis = if let Some(ref esca) = enclosing_scope_capture_analysis {
+                Some(esca)
+            } else {
+                None
+            };
+            populate_closures_in_stmts_with_outer(body, func_map, nested_analysis);
         }
         Expr::Binary { left, right, .. }
         | Expr::Compare { left, right, .. }
         | Expr::Logical { left, right, .. } => {
-            populate_closures_in_expr(left, func_map);
-            populate_closures_in_expr(right, func_map);
+            populate_closures_in_expr_with_outer(left, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(right, func_map, outer_closure_analysis);
         }
-        Expr::Unary { operand, .. } => populate_closures_in_expr(operand, func_map),
+        Expr::Unary { operand, .. } => populate_closures_in_expr_with_outer(operand, func_map, outer_closure_analysis),
         Expr::Call { callee, args, .. } => {
-            populate_closures_in_expr(callee, func_map);
+            populate_closures_in_expr_with_outer(callee, func_map, outer_closure_analysis);
             for arg in args {
-                populate_closures_in_expr(arg, func_map);
+                populate_closures_in_expr_with_outer(arg, func_map, outer_closure_analysis);
             }
         }
         Expr::CallSpread { callee, args, .. } => {
-            populate_closures_in_expr(callee, func_map);
+            populate_closures_in_expr_with_outer(callee, func_map, outer_closure_analysis);
             for arg in args {
                 match arg {
-                    CallArg::Expr(e) | CallArg::Spread(e) => populate_closures_in_expr(e, func_map),
+                    CallArg::Expr(e) | CallArg::Spread(e) => populate_closures_in_expr_with_outer(e, func_map, outer_closure_analysis),
                 }
             }
         }
         Expr::Array(elements) => {
             for e in elements {
-                populate_closures_in_expr(e, func_map);
+                populate_closures_in_expr_with_outer(e, func_map, outer_closure_analysis);
             }
         }
         Expr::ArraySpread(elements) => {
             for e in elements {
                 match e {
-                    ArrayElement::Expr(x) | ArrayElement::Spread(x) => populate_closures_in_expr(x, func_map),
+                    ArrayElement::Expr(x) | ArrayElement::Spread(x) => populate_closures_in_expr_with_outer(x, func_map, outer_closure_analysis),
                 }
             }
         }
         Expr::Object(fields) => {
             for (_, v) in fields {
-                populate_closures_in_expr(v, func_map);
+                populate_closures_in_expr_with_outer(v, func_map, outer_closure_analysis);
             }
         }
         Expr::ObjectSpread { parts } => {
             for (_, v) in parts {
-                populate_closures_in_expr(v, func_map);
+                populate_closures_in_expr_with_outer(v, func_map, outer_closure_analysis);
             }
         }
         Expr::Conditional { condition, then_expr, else_expr } => {
-            populate_closures_in_expr(condition, func_map);
-            populate_closures_in_expr(then_expr, func_map);
-            populate_closures_in_expr(else_expr, func_map);
+            populate_closures_in_expr_with_outer(condition, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(then_expr, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(else_expr, func_map, outer_closure_analysis);
         }
-        Expr::PropertyGet { object, .. } => populate_closures_in_expr(object, func_map),
+        Expr::PropertyGet { object, .. } => populate_closures_in_expr_with_outer(object, func_map, outer_closure_analysis),
         Expr::PropertySet { object, value, .. } => {
-            populate_closures_in_expr(object, func_map);
-            populate_closures_in_expr(value, func_map);
+            populate_closures_in_expr_with_outer(object, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(value, func_map, outer_closure_analysis);
         }
-        Expr::PropertyUpdate { object, .. } => populate_closures_in_expr(object, func_map),
+        Expr::PropertyUpdate { object, .. } => populate_closures_in_expr_with_outer(object, func_map, outer_closure_analysis),
         Expr::IndexGet { object, index } => {
-            populate_closures_in_expr(object, func_map);
-            populate_closures_in_expr(index, func_map);
+            populate_closures_in_expr_with_outer(object, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(index, func_map, outer_closure_analysis);
         }
         Expr::IndexSet { object, index, value } => {
-            populate_closures_in_expr(object, func_map);
-            populate_closures_in_expr(index, func_map);
-            populate_closures_in_expr(value, func_map);
+            populate_closures_in_expr_with_outer(object, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(index, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(value, func_map, outer_closure_analysis);
         }
         Expr::IndexUpdate { object, index, .. } => {
-            populate_closures_in_expr(object, func_map);
-            populate_closures_in_expr(index, func_map);
+            populate_closures_in_expr_with_outer(object, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(index, func_map, outer_closure_analysis);
         }
         Expr::New { args, .. } => {
             for arg in args {
-                populate_closures_in_expr(arg, func_map);
+                populate_closures_in_expr_with_outer(arg, func_map, outer_closure_analysis);
             }
         }
         Expr::NewDynamic { callee, args } => {
-            populate_closures_in_expr(callee, func_map);
+            populate_closures_in_expr_with_outer(callee, func_map, outer_closure_analysis);
             for arg in args {
-                populate_closures_in_expr(arg, func_map);
+                populate_closures_in_expr_with_outer(arg, func_map, outer_closure_analysis);
             }
         }
         Expr::LocalSet(_, value) | Expr::GlobalSet(_, value) => {
-            populate_closures_in_expr(value, func_map);
+            populate_closures_in_expr_with_outer(value, func_map, outer_closure_analysis);
         }
         Expr::Await(inner) | Expr::TypeOf(inner) | Expr::Void(inner) | Expr::Delete(inner) => {
-            populate_closures_in_expr(inner, func_map);
+            populate_closures_in_expr_with_outer(inner, func_map, outer_closure_analysis);
         }
-        Expr::InstanceOf { expr, .. } => populate_closures_in_expr(expr, func_map),
+        Expr::InstanceOf { expr, .. } => populate_closures_in_expr_with_outer(expr, func_map, outer_closure_analysis),
         Expr::In { property, object } => {
-            populate_closures_in_expr(property, func_map);
-            populate_closures_in_expr(object, func_map);
+            populate_closures_in_expr_with_outer(property, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(object, func_map, outer_closure_analysis);
         }
         Expr::Sequence(exprs) => {
             for e in exprs {
-                populate_closures_in_expr(e, func_map);
+                populate_closures_in_expr_with_outer(e, func_map, outer_closure_analysis);
             }
         }
         Expr::ArrayForEach { array, callback }
@@ -2640,63 +2670,63 @@ fn populate_closures_in_expr(expr: &mut Expr, func_map: &std::collections::HashM
         | Expr::ArraySome { array, callback }
         | Expr::ArrayEvery { array, callback }
         | Expr::ArrayFlatMap { array, callback } => {
-            populate_closures_in_expr(array, func_map);
-            populate_closures_in_expr(callback, func_map);
+            populate_closures_in_expr_with_outer(array, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(callback, func_map, outer_closure_analysis);
         }
         Expr::ArraySort { array, comparator } => {
-            populate_closures_in_expr(array, func_map);
-            populate_closures_in_expr(comparator, func_map);
+            populate_closures_in_expr_with_outer(array, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(comparator, func_map, outer_closure_analysis);
         }
         Expr::ArrayReduce { array, callback, initial } | Expr::ArrayReduceRight { array, callback, initial } => {
-            populate_closures_in_expr(array, func_map);
-            populate_closures_in_expr(callback, func_map);
+            populate_closures_in_expr_with_outer(array, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(callback, func_map, outer_closure_analysis);
             if let Some(init) = initial {
-                populate_closures_in_expr(init, func_map);
+                populate_closures_in_expr_with_outer(init, func_map, outer_closure_analysis);
             }
         }
         Expr::ArrayToReversed { array } => {
-            populate_closures_in_expr(array, func_map);
+            populate_closures_in_expr_with_outer(array, func_map, outer_closure_analysis);
         }
         Expr::ArrayToSorted { array, comparator } => {
-            populate_closures_in_expr(array, func_map);
+            populate_closures_in_expr_with_outer(array, func_map, outer_closure_analysis);
             if let Some(cmp) = comparator {
-                populate_closures_in_expr(cmp, func_map);
+                populate_closures_in_expr_with_outer(cmp, func_map, outer_closure_analysis);
             }
         }
         Expr::ArrayToSpliced { array, start, delete_count, items } => {
-            populate_closures_in_expr(array, func_map);
-            populate_closures_in_expr(start, func_map);
-            populate_closures_in_expr(delete_count, func_map);
+            populate_closures_in_expr_with_outer(array, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(start, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(delete_count, func_map, outer_closure_analysis);
             for item in items {
-                populate_closures_in_expr(item, func_map);
+                populate_closures_in_expr_with_outer(item, func_map, outer_closure_analysis);
             }
         }
         Expr::ArrayWith { array, index, value } => {
-            populate_closures_in_expr(array, func_map);
-            populate_closures_in_expr(index, func_map);
-            populate_closures_in_expr(value, func_map);
+            populate_closures_in_expr_with_outer(array, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(index, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(value, func_map, outer_closure_analysis);
         }
         Expr::ArrayCopyWithin { target, start, end, .. } => {
-            populate_closures_in_expr(target, func_map);
-            populate_closures_in_expr(start, func_map);
+            populate_closures_in_expr_with_outer(target, func_map, outer_closure_analysis);
+            populate_closures_in_expr_with_outer(start, func_map, outer_closure_analysis);
             if let Some(e) = end {
-                populate_closures_in_expr(e, func_map);
+                populate_closures_in_expr_with_outer(e, func_map, outer_closure_analysis);
             }
         }
         Expr::ArrayEntries(array) | Expr::ArrayKeys(array) | Expr::ArrayValues(array) => {
-            populate_closures_in_expr(array, func_map);
+            populate_closures_in_expr_with_outer(array, func_map, outer_closure_analysis);
         }
         Expr::NativeMethodCall { object, args, .. } => {
             if let Some(obj) = object {
-                populate_closures_in_expr(obj, func_map);
+                populate_closures_in_expr_with_outer(obj, func_map, outer_closure_analysis);
             }
             for arg in args {
-                populate_closures_in_expr(arg, func_map);
+                populate_closures_in_expr_with_outer(arg, func_map, outer_closure_analysis);
             }
         }
-        Expr::JsCreateCallback { closure, .. } => populate_closures_in_expr(closure, func_map),
+        Expr::JsCreateCallback { closure, .. } => populate_closures_in_expr_with_outer(closure, func_map, outer_closure_analysis),
         Expr::ArrayPush { value, .. } | Expr::ArrayPushSpread { source: value, .. } => {
-            populate_closures_in_expr(value, func_map);
+            populate_closures_in_expr_with_outer(value, func_map, outer_closure_analysis);
         }
         _ => {}
     }

@@ -25,9 +25,11 @@ use crate::types::I32;
 pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
     let is_closure_body = ctx.current_closure_ptr.is_some();
     
-    // If we're in a closure body, we don't allocate scope objects - they come from captures
-    if is_closure_body {
-        // For closure bodies, scope pointers are loaded from captures later by LocalGet
+    // For regular function closures (where current_closure_ptr is set from captures),
+    // we skip allocation because scope pointers come from captures.
+    // BUT: module-level closures have their own scope_capture_analysis and need to allocate!
+    if is_closure_body && ctx.scope_capture_analysis.is_none() {
+        // Regular closure with no internal scope analysis - scope pointers come from captures
         // We don't allocate anything here
         return Ok(());
     }

@@ -368,7 +368,16 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
             // to find the slot during their capture pass. Without
             // this, the capture reads 0.0 from the soft fallback
             // instead of the box pointer.
-            if ctx.boxed_vars.contains(id) {
+            //
+            // ALSO: if this variable is in a scope that uses scope objects,
+            // skip boxing — scope objects replace the boxing system.
+            let uses_scope_objects = if let Some(analysis) = &ctx.scope_capture_analysis {
+                crate::scope_objects::get_scope_and_index(*id, analysis).is_some()
+            } else {
+                false
+            };
+            
+            if ctx.boxed_vars.contains(id) && !uses_scope_objects {
                 // Step 1: allocate box with undefined sentinel.
                 let undef = crate::nanbox::double_literal(f64::from_bits(
                     crate::nanbox::TAG_UNDEFINED,
