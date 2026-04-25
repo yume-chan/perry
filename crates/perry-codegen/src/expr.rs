@@ -838,35 +838,11 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             }
 
             let v = lower_expr(ctx, value)?;
-            // Closure captures first (write through the runtime), then
-            // locals, then module globals.
-            if let Some(&capture_idx) = ctx.closure_captures.get(id) {
-                let closure_ptr = ctx
-                    .current_closure_ptr
-                    .clone()
-                    .ok_or_else(|| anyhow!("captured local set but no current_closure_ptr"))?;
-                let idx_str = capture_idx.to_string();
-                // Boxed captured var: read the box pointer from the
-                // capture slot, then js_box_set to update the shared
-                // cell. Do NOT overwrite the capture slot — it holds
-                // the box pointer, not the value.
-                if ctx.boxed_vars.contains(id) {
-                    let blk = ctx.block();
-                    let cap_dbl = blk.call(
-                        DOUBLE,
-                        "js_closure_get_capture_f64",
-                        &[(I64, &closure_ptr), (I32, &idx_str)],
-                    );
-                    let box_ptr = blk.bitcast_double_to_i64(&cap_dbl);
-                    blk.call_void("js_box_set", &[(I64, &box_ptr), (DOUBLE, &v)]);
-                } else {
-                    ctx.block().call_void(
-                        "js_closure_set_capture_f64",
-                        &[(I64, &closure_ptr), (I32, &idx_str), (DOUBLE, &v)],
-                    );
-                }
-            } else if let Some(analysis) = &ctx.scope_capture_analysis {
-                // Scope object local (captured variable but not via old closure captures)
+            // Scope objects first (new system), then closure captures (old system), 
+            // then locals, then module globals.
+            
+            // NEW SYSTEM: Check scope object local first
+            if let Some(analysis) = &ctx.scope_capture_analysis {
                 if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
                     // Inside a closure body: get the scope pointer from the closure's captures
                     if let Some(closure_capture_idx_val) = ctx.closure_scope_indices.get(&scope_id).copied() {
@@ -900,9 +876,35 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         }
                     }
                 }
-                // Fall through to normal handling if scope object not available
             }
-            if ctx.boxed_vars.contains(id) && !ctx.module_globals.contains_key(id) {
+            
+            // OLD SYSTEM: Closure captures (fallback)
+            if let Some(&capture_idx) = ctx.closure_captures.get(id) {
+                let closure_ptr = ctx
+                    .current_closure_ptr
+                    .clone()
+                    .ok_or_else(|| anyhow!("captured local set but no current_closure_ptr"))?;
+                let idx_str = capture_idx.to_string();
+                // Boxed captured var: read the box pointer from the
+                // capture slot, then js_box_set to update the shared
+                // cell. Do NOT overwrite the capture slot — it holds
+                // the box pointer, not the value.
+                if ctx.boxed_vars.contains(id) {
+                    let blk = ctx.block();
+                    let cap_dbl = blk.call(
+                        DOUBLE,
+                        "js_closure_get_capture_f64",
+                        &[(I64, &closure_ptr), (I32, &idx_str)],
+                    );
+                    let box_ptr = blk.bitcast_double_to_i64(&cap_dbl);
+                    blk.call_void("js_box_set", &[(I64, &box_ptr), (DOUBLE, &v)]);
+                } else {
+                    ctx.block().call_void(
+                        "js_closure_set_capture_f64",
+                        &[(I64, &closure_ptr), (I32, &idx_str), (DOUBLE, &v)],
+                    );
+                }
+            } else if ctx.boxed_vars.contains(id) && !ctx.module_globals.contains_key(id) {
                 // Box path — only for non-global locals. Module globals
                 // have their own shared storage and don't need boxing.
                 // Without the !module_globals guard, closures that
@@ -939,47 +941,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         // prefix returns the NEW value. Closure captures, locals, then
         // module globals.
         Expr::Update { id, op, prefix } => {
-            // Closure capture path: runtime get + add/sub + runtime set.
-            if let Some(&capture_idx) = ctx.closure_captures.get(id) {
-                let closure_ptr = ctx
-                    .current_closure_ptr
-                    .clone()
-                    .ok_or_else(|| anyhow!("captured local update but no current_closure_ptr"))?;
-                let idx_str = capture_idx.to_string();
-                // Boxed captured var: deref box, modify, store back.
-                if ctx.boxed_vars.contains(id) {
-                    let blk = ctx.block();
-                    let cap_dbl = blk.call(
-                        DOUBLE,
-                        "js_closure_get_capture_f64",
-                        &[(I64, &closure_ptr), (I32, &idx_str)],
-                    );
-                    let box_ptr = blk.bitcast_double_to_i64(&cap_dbl);
-                    let old = blk.call(DOUBLE, "js_box_get", &[(I64, &box_ptr)]);
-                    let new = match op {
-                        UpdateOp::Increment => blk.fadd(&old, "1.0"),
-                        UpdateOp::Decrement => blk.fsub(&old, "1.0"),
-                    };
-                    blk.call_void("js_box_set", &[(I64, &box_ptr), (DOUBLE, &new)]);
-                    return Ok(if *prefix { new } else { old });
-                }
-                let old = ctx.block().call(
-                    DOUBLE,
-                    "js_closure_get_capture_f64",
-                    &[(I64, &closure_ptr), (I32, &idx_str)],
-                );
-                let blk = ctx.block();
-                let new = match op {
-                    UpdateOp::Increment => blk.fadd(&old, "1.0"),
-                    UpdateOp::Decrement => blk.fsub(&old, "1.0"),
-                };
-                blk.call_void(
-                    "js_closure_set_capture_f64",
-                    &[(I64, &closure_ptr), (I32, &idx_str), (DOUBLE, &new)],
-                );
-                return Ok(if *prefix { new } else { old });
-            }
-            // Scope object local (increment/decrement)
+            // Scope object local (increment/decrement) - check this FIRST (new system)
             if let Some(analysis) = &ctx.scope_capture_analysis {
                 if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
                     // Inside a closure body: get the scope pointer from the closure's captures
@@ -1037,6 +999,47 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         }
                     }
                 }
+            }
+            
+            // Closure capture path: runtime get + add/sub + runtime set (old system, fallback)
+            if let Some(&capture_idx) = ctx.closure_captures.get(id) {
+                let closure_ptr = ctx
+                    .current_closure_ptr
+                    .clone()
+                    .ok_or_else(|| anyhow!("captured local update but no current_closure_ptr"))?;
+                let idx_str = capture_idx.to_string();
+                // Boxed captured var: deref box, modify, store back.
+                if ctx.boxed_vars.contains(id) {
+                    let blk = ctx.block();
+                    let cap_dbl = blk.call(
+                        DOUBLE,
+                        "js_closure_get_capture_f64",
+                        &[(I64, &closure_ptr), (I32, &idx_str)],
+                    );
+                    let box_ptr = blk.bitcast_double_to_i64(&cap_dbl);
+                    let old = blk.call(DOUBLE, "js_box_get", &[(I64, &box_ptr)]);
+                    let new = match op {
+                        UpdateOp::Increment => blk.fadd(&old, "1.0"),
+                        UpdateOp::Decrement => blk.fsub(&old, "1.0"),
+                    };
+                    blk.call_void("js_box_set", &[(I64, &box_ptr), (DOUBLE, &new)]);
+                    return Ok(if *prefix { new } else { old });
+                }
+                let old = ctx.block().call(
+                    DOUBLE,
+                    "js_closure_get_capture_f64",
+                    &[(I64, &closure_ptr), (I32, &idx_str)],
+                );
+                let blk = ctx.block();
+                let new = match op {
+                    UpdateOp::Increment => blk.fadd(&old, "1.0"),
+                    UpdateOp::Decrement => blk.fsub(&old, "1.0"),
+                };
+                blk.call_void(
+                    "js_closure_set_capture_f64",
+                    &[(I64, &closure_ptr), (I32, &idx_str), (DOUBLE, &new)],
+                );
+                return Ok(if *prefix { new } else { old });
             }
             // Boxed enclosing-scope var: load slot (box ptr), deref,
             // increment, box_set. Skip for module globals (they
