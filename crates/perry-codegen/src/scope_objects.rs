@@ -7,11 +7,11 @@
 //! This module provides utilities for understanding scope object metadata
 //! during code generation, but the actual emission logic is in expr.rs and stmt.rs.
 
+use crate::expr::FnCtx;
+use crate::types::I32;
 use anyhow::Result;
 use perry_hir::{CaptureAnalysis, ScopeId};
 use perry_types::LocalId;
-use crate::expr::FnCtx;
-use crate::types::I32;
 
 /// Allocate scope objects for root scope only at function entry.
 ///
@@ -24,7 +24,7 @@ use crate::types::I32;
 /// ctx.scope_ptrs so variable access can route through it.
 pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
     let is_closure_body = ctx.current_closure_ptr.is_some();
-    
+
     // For regular function closures (where current_closure_ptr is set from captures),
     // we skip allocation because scope pointers come from captures.
     // BUT: module-level closures have their own scope_capture_analysis and need to allocate!
@@ -33,34 +33,33 @@ pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
         // We don't allocate anything here
         return Ok(());
     }
-    
+
     // Collect root scopes (parent_scope == None) only
-    let init_data: Vec<(ScopeId, usize, Vec<(usize, perry_types::LocalId)>)> = if let Some(analysis) = &ctx.scope_capture_analysis {
-        let mut data = Vec::new();
-        for (scope_id, scope_ctx) in &analysis.scopes {
-            // Only allocate root scopes at function entry
-            if scope_ctx.parent_scope.is_none() {
-                let var_count = scope_ctx.scope_object_var_count();
-                if var_count > 0 {
-                    let captured_with_indices: Vec<(usize, perry_types::LocalId)> = scope_ctx.captured_variables
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, local_id)| (idx, *local_id))
-                        .collect();
-                    data.push((*scope_id, var_count, captured_with_indices));
+    let init_data: Vec<(ScopeId, usize, Vec<(usize, perry_types::LocalId)>)> =
+        if let Some(analysis) = &ctx.scope_capture_analysis {
+            let mut data = Vec::new();
+            for (scope_id, scope_ctx) in &analysis.scopes {
+                // Only allocate root scopes at function entry
+                if scope_ctx.parent_scope.is_none() {
+                    let var_count = scope_ctx.scope_object_var_count();
+                    if var_count > 0 {
+                        let captured_with_indices: Vec<(usize, perry_types::LocalId)> = scope_ctx
+                            .captured_variables
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, local_id)| (idx, *local_id))
+                            .collect();
+                        data.push((*scope_id, var_count, captured_with_indices));
+                    }
                 }
             }
-        }
-        data
-    } else {
-        Vec::new()
-    };
-    
+            data
+        } else {
+            Vec::new()
+        };
+
     // Allocate scope objects and populate with parameters
     for (scope_id, var_count, captured_vars) in init_data {
-        // Allocate a stack slot for the scope pointer
-        let scope_ptr_slot = ctx.block().alloca(crate::types::I64);
-        
         // Call js_scope_object_alloc(var_count)
         let var_count_str = var_count.to_string();
         let scope_ptr = ctx.block().call(
@@ -68,16 +67,12 @@ pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
             "js_scope_object_alloc",
             &[(I32, &var_count_str)],
         );
-        
-        // Store the pointer in the stack slot
-        ctx.block().store(crate::types::I64, &scope_ptr, &scope_ptr_slot);
-        
+
         // Track the scope pointer location
-        ctx.scope_ptrs.insert(scope_id, scope_ptr_slot.clone());
-        
+        ctx.scope_ptrs.insert(scope_id, scope_ptr.clone());
+
         // Now populate captured variables from this scope
         for (var_index, local_id) in captured_vars {
-            
             // If this local is a parameter (has a stack slot), initialize its value in the scope object
             if let Some(param_slot) = ctx.locals.get(&local_id).cloned() {
                 let blk = ctx.block();
@@ -85,18 +80,21 @@ pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
                 let var_index_str = var_index.to_string();
                 blk.call_void(
                     "js_scope_object_set_f64",
-                    &[(crate::types::I64, &scope_ptr), (I32, &var_index_str), (crate::types::DOUBLE, &val)],
+                    &[
+                        (crate::types::I64, &scope_ptr),
+                        (I32, &var_index_str),
+                        (crate::types::DOUBLE, &val),
+                    ],
                 );
-            } else {
             }
         }
     }
-    
+
     Ok(())
 }
 
 /// Lazily allocate a scope if it hasn't been allocated yet.
-/// 
+///
 /// This is called when accessing a variable in a scope to ensure the scope
 /// object is created even if it wasn't allocated at function entry (e.g., for
 /// scopes inside conditional blocks).
@@ -105,15 +103,12 @@ pub fn ensure_scope_allocated(ctx: &mut FnCtx<'_>, scope_id: ScopeId) -> Result<
     if ctx.scope_ptrs.contains_key(&scope_id) {
         return Ok(());
     }
-    
+
     // Find the scope in the capture analysis
     if let Some(analysis) = &ctx.scope_capture_analysis {
         if let Some(scope_ctx) = analysis.scopes.get(&scope_id) {
             let var_count = scope_ctx.scope_object_var_count();
             if var_count > 0 {
-                // Allocate a stack slot for the scope pointer
-                let scope_ptr_slot = ctx.block().alloca(crate::types::I64);
-                
                 // Call js_scope_object_alloc(var_count)
                 let var_count_str = var_count.to_string();
                 let scope_ptr = ctx.block().call(
@@ -121,16 +116,13 @@ pub fn ensure_scope_allocated(ctx: &mut FnCtx<'_>, scope_id: ScopeId) -> Result<
                     "js_scope_object_alloc",
                     &[(I32, &var_count_str)],
                 );
-                
-                // Store the pointer in the stack slot
-                ctx.block().store(crate::types::I64, &scope_ptr, &scope_ptr_slot);
-                
+
                 // Track the scope pointer location
-                ctx.scope_ptrs.insert(scope_id, scope_ptr_slot.clone());
+                ctx.scope_ptrs.insert(scope_id, scope_ptr);
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -147,7 +139,10 @@ pub fn local_needs_scope_object(local_id: LocalId, analysis: &CaptureAnalysis) -
 
 /// Get the scope and index for a captured variable in a scope object.
 /// Returns (ScopeId, variable_index_in_scope) if the local is captured.
-pub fn get_scope_and_index(local_id: LocalId, analysis: &CaptureAnalysis) -> Option<(ScopeId, usize)> {
+pub fn get_scope_and_index(
+    local_id: LocalId,
+    analysis: &CaptureAnalysis,
+) -> Option<(ScopeId, usize)> {
     // Find which scope this local is captured in and its index within that scope
     for scope_ctx in analysis.scopes.values() {
         if let Some(index) = scope_ctx.get_capture_index(local_id) {

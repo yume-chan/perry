@@ -376,7 +376,7 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
             } else {
                 false
             };
-            
+
             if ctx.boxed_vars.contains(id) && !uses_scope_objects {
                 // Step 1: allocate box with undefined sentinel.
                 let undef = crate::nanbox::double_literal(f64::from_bits(
@@ -470,25 +470,24 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
             if let Some(init_expr) = init {
                 let v = lower_expr(ctx, init_expr)?;
                 ctx.block().store(DOUBLE, &v, &slot);
-                
+
                 // Write to scope object if this local is captured (new scope object system)
                 if let Some(analysis) = &ctx.scope_capture_analysis {
                     if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
                         // Ensure the scope is allocated (lazy allocation for nested scopes)
                         crate::scope_objects::ensure_scope_allocated(ctx, scope_id)?;
-                        
+
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let blk = ctx.block();
-                            let scope_ptr = blk.load(crate::types::I64, &scope_ptr_slot);
                             let var_index_str = var_index.to_string();
                             blk.call_void(
                                 "js_scope_object_set_f64",
-                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str), (crate::types::DOUBLE, &v)],
+                                &[(crate::types::I64, &scope_ptr_slot), (I32, &var_index_str), (crate::types::DOUBLE, &v)],
                             );
                         }
                     }
                 }
-                
+
                 // Seed the i32 slot from the init value when the local has one.
                 // Use fptosi→i64 + trunc→i32 instead of direct fptosi→i32
                 // to handle unsigned values (e.g. `let s = 0x9E3779B9 >>> 0`

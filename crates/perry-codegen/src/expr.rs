@@ -550,7 +550,7 @@ pub(crate) struct FnCtx<'a> {
     /// `None` if using the old box-based system. When `Some`, closures
     /// are created with scope pointers instead of individual captures.
     pub scope_capture_analysis: Option<Box<CaptureAnalysis>>,
-    
+
     /// When lowering a closure body with scope objects, this maps each
     /// scope to its index in the closure's capture array. Used during
     /// LocalGet/LocalSet to route through scope objects.
@@ -702,23 +702,21 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         // Not in a closure body: get from the scope pointer directly
                         // Ensure scope is allocated (lazy allocation for nested scopes)
                         crate::scope_objects::ensure_scope_allocated(ctx, scope_id)?;
-                        
+
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let blk = ctx.block();
-                            // Load the scope pointer from its stack slot
-                            let scope_ptr = blk.load(crate::types::I64, &scope_ptr_slot);
                             // Read the variable from the scope object
                             let var_index_str = var_index.to_string();
                             return Ok(blk.call(
                                 DOUBLE,
                                 "js_scope_object_get_f64",
-                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str)],
+                                &[(crate::types::I64, &scope_ptr_slot), (I32, &var_index_str)],
                             ));
                         }
                     }
                 }
             }
-            
+
             // OLD SYSTEM: Captured by closure (from outer scope) - FALLBACK if scope objects don't apply
             if let Some(&capture_idx) = ctx.closure_captures.get(id) {
                 let closure_ptr = ctx
@@ -836,9 +834,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             }
 
             let v = lower_expr(ctx, value)?;
-            // Scope objects first (new system), then closure captures (old system), 
+            // Scope objects first (new system), then closure captures (old system),
             // then locals, then module globals.
-            
+
             // NEW SYSTEM: Check scope object local first
             if let Some(analysis) = &ctx.scope_capture_analysis {
                 if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
@@ -862,7 +860,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         // Not in a closure body: write to the scope pointer directly
                         // Ensure scope is allocated (lazy allocation for nested scopes)
                         crate::scope_objects::ensure_scope_allocated(ctx, scope_id)?;
-                        
+
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let blk = ctx.block();
                             // Load the scope pointer from its stack slot
@@ -878,7 +876,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     }
                 }
             }
-            
+
             // OLD SYSTEM: Closure captures (fallback)
             if let Some(&capture_idx) = ctx.closure_captures.get(id) {
                 let closure_ptr = ctx
@@ -977,14 +975,12 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         // Not in a closure body: read from the scope pointer directly
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let blk = ctx.block();
-                            // Load the scope pointer from its stack slot
-                            let scope_ptr = blk.load(crate::types::I64, &scope_ptr_slot);
                             // Read the variable from the scope object
                             let var_index_str = var_index.to_string();
                             let old = blk.call(
                                 DOUBLE,
                                 "js_scope_object_get_f64",
-                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str)],
+                                &[(crate::types::I64, &scope_ptr_slot), (I32, &var_index_str)],
                             );
                             // Compute the new value
                             let new = match op {
@@ -994,14 +990,14 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                             // Write back to scope object
                             blk.call_void(
                                 "js_scope_object_set_f64",
-                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str), (DOUBLE, &new)],
+                                &[(crate::types::I64, &scope_ptr_slot), (I32, &var_index_str), (DOUBLE, &new)],
                             );
                             return Ok(if *prefix { new } else { old });
                         }
                     }
                 }
             }
-            
+
             // Closure capture path: runtime get + add/sub + runtime set (old system, fallback)
             if let Some(&capture_idx) = ctx.closure_captures.get(id) {
                 let closure_ptr = ctx
@@ -3061,16 +3057,16 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // Boxed captures store the box pointer itself (not the value inside).
             // We store the box pointer (as a bit-castable double) in the closure's
             // capture slot, so reads/writes inside the closure can deref it.
-            
+
             let mut captured_values: Vec<String> = Vec::new();
             let mut use_scope_objects = false;
-            
+
             // Check if we should use scope objects
             // Use the closure's enclosing_scope_capture_analysis to determine where captures come from
             let scopes_to_load: Vec<(perry_hir::ScopeId, String)> = if let Some(analysis) = enclosing_scope_capture_analysis.as_ref() {
-                let mut scopes_found: std::collections::BTreeMap<perry_hir::ScopeId, String> = 
+                let mut scopes_found: std::collections::BTreeMap<perry_hir::ScopeId, String> =
                     std::collections::BTreeMap::new();
-                
+
                 for cap_id in &auto_captures {
                     if let Some((scope_id, _)) = crate::scope_objects::get_scope_and_index(*cap_id, analysis) {
                         if !scopes_found.contains_key(&scope_id) {
@@ -3087,12 +3083,12 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         }
                     }
                 }
-                
+
                 scopes_found.into_iter().collect()
             } else {
                 Vec::new()
             };
-            
+
             // Now load the scope pointers (can mutable borrow ctx now that analysis borrow is released)
             if !scopes_to_load.is_empty() {
                 use_scope_objects = true;
@@ -3111,14 +3107,12 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                             captured_values.push(scope_ptr);
                         }
                     } else {
-                        // Regular function context - load from stack slot
-                        let scope_ptr = ctx.block().load(crate::types::I64, scope_ptr_slot_or_marker);
-                        captured_values.push(scope_ptr);
+                        captured_values.push(scope_ptr_slot_or_marker.clone());
                     }
                 }
             } else {
             }
-            
+
             // Fallback: old js_box approach
             if !use_scope_objects {
                 for cap_id in &auto_captures {
@@ -3196,7 +3190,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 "js_closure_alloc",
                 &[(PTR, &func_ref), (I32, &cap_count)],
             );
-            
+
             // Store captured values: use appropriate function based on whether
             // we're using scope objects (i64 pointers) or old js_box approach (f64 values)
             for (idx, val) in captured_values.iter().enumerate() {

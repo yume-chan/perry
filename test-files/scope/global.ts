@@ -3,4 +3,5 @@ const f = (() => {
   return () => ++count;
 })();
 
-console.log(f());
+console.log(f(), 'should be 1');
+console.log(f(), 'should be 2');

@@ -8,4 +8,4 @@ function createClosure(a: number, b: number) {
 }
 
 const adder = createClosure(6, 3);
-console.log(adder());
+console.log(adder(), 'should be 10');

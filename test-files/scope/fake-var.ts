@@ -11,4 +11,7 @@ function b(v: string) {
 }
 
 a("Hello");
+console.log('should be Hello');
+
 b("Hello");
+console.log('should be World');
