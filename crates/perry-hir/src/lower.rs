@@ -2448,20 +2448,41 @@ fn populate_enclosing_scope_capture_analysis(module: &mut Module) {
     }
 
 
-    // For each function, walk its body and populate closures' enclosing_scope_capture_analysis
+    // For each function, walk its body and parameter defaults to populate closures' enclosing_scope_capture_analysis
     for func in &mut module.functions {
+        // Walk parameter defaults first
+        for param in &mut func.params {
+            if let Some(ref mut default_expr) = param.default {
+                populate_closures_in_expr(default_expr, &func_map);
+            }
+        }
         populate_closures_in_stmts(&mut func.body, &func_map);
     }
 
-    // Also process class methods
+    // Also process class methods and their parameter defaults
     for class in &mut module.classes {
         for method in &mut class.methods {
+            for param in &mut method.params {
+                if let Some(ref mut default_expr) = param.default {
+                    populate_closures_in_expr(default_expr, &func_map);
+                }
+            }
             populate_closures_in_stmts(&mut method.body, &func_map);
         }
         for static_method in &mut class.static_methods {
+            for param in &mut static_method.params {
+                if let Some(ref mut default_expr) = param.default {
+                    populate_closures_in_expr(default_expr, &func_map);
+                }
+            }
             populate_closures_in_stmts(&mut static_method.body, &func_map);
         }
         if let Some(ref mut ctor) = class.constructor {
+            for param in &mut ctor.params {
+                if let Some(ref mut default_expr) = param.default {
+                    populate_closures_in_expr(default_expr, &func_map);
+                }
+            }
             populate_closures_in_stmts(&mut ctor.body, &func_map);
         }
     }

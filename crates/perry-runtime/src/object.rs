@@ -1136,8 +1136,15 @@ pub extern "C" fn js_build_class_keys_array(
     if !cached.is_null() {
         return cached;
     }
-    let keys_bytes = unsafe { std::slice::from_raw_parts(packed_keys, packed_keys_len as usize) };
-    let keys: Vec<&[u8]> = keys_bytes.split(|&b| b == 0).filter(|s| !s.is_empty()).collect();
+    
+    // Handle empty key list (classes with no fields)
+    let keys: Vec<&[u8]> = if packed_keys_len == 0 {
+        Vec::new()
+    } else {
+        let keys_bytes = unsafe { std::slice::from_raw_parts(packed_keys, packed_keys_len as usize) };
+        keys_bytes.split(|&b| b == 0).filter(|s| !s.is_empty()).collect()
+    };
+    
     let num_keys = keys.len();
     let arr = crate::array::js_array_alloc_with_length(num_keys as u32);
     let elements_ptr = unsafe { (arr as *mut u8).add(8) as *mut f64 };
@@ -1204,8 +1211,13 @@ pub extern "C" fn js_object_alloc_class_with_keys(
     let keys_arr = if !cached.is_null() {
         cached
     } else {
-        let keys_bytes = unsafe { std::slice::from_raw_parts(packed_keys, packed_keys_len as usize) };
-        let keys: Vec<&[u8]> = keys_bytes.split(|&b| b == 0).filter(|s| !s.is_empty()).collect();
+        // Handle empty key list (classes with no fields)
+        let keys: Vec<&[u8]> = if packed_keys_len == 0 {
+            Vec::new()
+        } else {
+            let keys_bytes = unsafe { std::slice::from_raw_parts(packed_keys, packed_keys_len as usize) };
+            keys_bytes.split(|&b| b == 0).filter(|s| !s.is_empty()).collect()
+        };
         let num_keys = keys.len();
         let arr = crate::array::js_array_alloc_with_length(num_keys as u32);
         let elements_ptr = unsafe { (arr as *mut u8).add(8) as *mut f64 };
@@ -1263,8 +1275,13 @@ pub extern "C" fn js_object_alloc_with_shape(
     let keys_arr = if !cached.is_null() {
         cached
     } else {
-        let keys_bytes = unsafe { std::slice::from_raw_parts(packed_keys, packed_keys_len as usize) };
-        let keys: Vec<&[u8]> = keys_bytes.split(|&b| b == 0).filter(|s| !s.is_empty()).collect();
+        // Handle empty key list (objects with no fields)
+        let keys: Vec<&[u8]> = if packed_keys_len == 0 {
+            Vec::new()
+        } else {
+            let keys_bytes = unsafe { std::slice::from_raw_parts(packed_keys, packed_keys_len as usize) };
+            keys_bytes.split(|&b| b == 0).filter(|s| !s.is_empty()).collect()
+        };
         let num_keys = keys.len();
         let arr = crate::array::js_array_alloc_with_length(num_keys as u32);
         let elements_ptr = unsafe { (arr as *mut u8).add(8) as *mut f64 };

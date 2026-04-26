@@ -2259,7 +2259,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 let closure_capture_analysis = crate::capture_analysis::analyze_captures(&body, &closure_locals);
 
                 let closure = Expr::Closure {
-                    enclosing_func_id: None,
+                    enclosing_func_id: ctx.current_enclosing_func_id,
                     func_id,
                     params,
                     return_type: Type::Any,

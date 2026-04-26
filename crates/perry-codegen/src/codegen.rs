@@ -748,22 +748,28 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         }
 
         for f in &hir.functions {
+            collect_closures_in_params(&f.params, &mut all_closures_seen, &mut all_closures);
             collect_closures_in_stmts(&f.body, &mut all_closures_seen, &mut all_closures);
         }
         for c in &hir.classes {
             for m in &c.methods {
+                collect_closures_in_params(&m.params, &mut all_closures_seen, &mut all_closures);
                 collect_closures_in_stmts(&m.body, &mut all_closures_seen, &mut all_closures);
             }
             for (_, getter_fn) in &c.getters {
+                collect_closures_in_params(&getter_fn.params, &mut all_closures_seen, &mut all_closures);
                 collect_closures_in_stmts(&getter_fn.body, &mut all_closures_seen, &mut all_closures);
             }
             for (_, setter_fn) in &c.setters {
+                collect_closures_in_params(&setter_fn.params, &mut all_closures_seen, &mut all_closures);
                 collect_closures_in_stmts(&setter_fn.body, &mut all_closures_seen, &mut all_closures);
             }
             for sm in &c.static_methods {
+                collect_closures_in_params(&sm.params, &mut all_closures_seen, &mut all_closures);
                 collect_closures_in_stmts(&sm.body, &mut all_closures_seen, &mut all_closures);
             }
             if let Some(ctor) = &c.constructor {
+                collect_closures_in_params(&ctor.params, &mut all_closures_seen, &mut all_closures);
                 collect_closures_in_stmts(&ctor.body, &mut all_closures_seen, &mut all_closures);
             }
         }
@@ -1835,6 +1841,7 @@ fn compile_function(
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: f.scope_capture_analysis.clone(),
+        enclosing_scope_capture_analysis: None,
         closure_auto_captures_cache: HashMap::new(),
         closure_scope_indices: HashMap::new(),
     };
@@ -1959,7 +1966,7 @@ fn compile_closure(
 
     // Destructure the closure expression. We trust that the caller
     // passes only `Expr::Closure` here (from `collect_closures_*`).
-    let (params, body, captures, captures_this, enclosing_class, enclosing_scope_capture_analysis, _scope_capture_analysis) = match closure_expr {
+    let (params, body, captures, captures_this, enclosing_class, enclosing_scope_capture_analysis, scope_capture_analysis) = match closure_expr {
         perry_hir::Expr::Closure {
             params,
             body,
@@ -2172,7 +2179,8 @@ fn compile_closure(
         buffer_data_slots: HashMap::new(),
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
-        scope_capture_analysis: enclosing_scope_capture_analysis.clone(),
+        scope_capture_analysis: scope_capture_analysis.clone(),
+        enclosing_scope_capture_analysis: enclosing_scope_capture_analysis.clone(),
         closure_auto_captures_cache: HashMap::new(),
         closure_scope_indices: HashMap::new(),
     };
@@ -2183,7 +2191,8 @@ fn compile_closure(
     // Phase 3b: Compute scope indices for closure body reading
     // If using scope objects, compute which scopes this closure captures
     // and map them to their indices in the capture array.
-    if let Some(analysis) = &ctx.scope_capture_analysis {
+    // Use enclosing_scope_capture_analysis to determine which scopes from parent are accessed
+    if let Some(analysis) = &enclosing_scope_capture_analysis {
         // Collect all unique scopes from auto_captures, in deterministic order
         let mut scopes_used: std::collections::BTreeMap<perry_hir::ScopeId, ()> =
             std::collections::BTreeMap::new();
@@ -2418,6 +2427,7 @@ fn compile_method(
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: method.scope_capture_analysis.clone(),
+        enclosing_scope_capture_analysis: None,
         closure_auto_captures_cache: HashMap::new(),
         closure_scope_indices: HashMap::new(),
     };
@@ -2677,6 +2687,7 @@ fn compile_module_entry(
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: None,
+        enclosing_scope_capture_analysis: None,
         closure_auto_captures_cache: HashMap::new(),
         closure_scope_indices: HashMap::new(),
         };
@@ -2899,6 +2910,7 @@ fn compile_module_entry(
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: None,
+        enclosing_scope_capture_analysis: None,
         closure_auto_captures_cache: HashMap::new(),
         closure_scope_indices: HashMap::new(),
         };
@@ -3301,6 +3313,7 @@ fn compile_static_method(
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
         scope_capture_analysis: f.scope_capture_analysis.clone(),
+        enclosing_scope_capture_analysis: None,
         closure_auto_captures_cache: HashMap::new(),
         closure_scope_indices: HashMap::new(),
     };
@@ -3603,7 +3616,7 @@ fn init_static_fields(
 
 // Collector and boxing-analysis walkers live in dedicated modules.
 use crate::collectors::{
-    collect_closures_in_stmts, collect_let_ids, collect_ref_ids_in_stmts,
+    collect_closures_in_stmts, collect_closures_in_params, collect_let_ids, collect_ref_ids_in_stmts,
 };
 use crate::boxed_vars::{collect_boxed_vars, collect_let_types_in_stmts};
 

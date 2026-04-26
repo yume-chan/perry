@@ -555,6 +555,12 @@ pub(crate) struct FnCtx<'a> {
     /// are created with scope pointers instead of individual captures.
     pub scope_capture_analysis: Option<Box<CaptureAnalysis>>,
 
+    /// For closures: the enclosing function's scope capture analysis.
+    /// When a closure accesses captured variables from its parent scope,
+    /// this analysis tells it which scope each variable belongs to.
+    /// Used in LocalGet to route through scope objects instead of old-style captures.
+    pub enclosing_scope_capture_analysis: Option<Box<CaptureAnalysis>>,
+
     /// Stack of ScopeIds during lowering. Tracks which scopes we're currently nested in.
     /// When lowering a closure body with scope objects, this maps each
     /// scope to its index in the closure's capture array. Used during
@@ -684,8 +690,8 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         // module-scope `let`s (the ones in `hir.init` at top level).
         Expr::LocalGet(id) => {
             // NEW SYSTEM: Scope object local (captured variable): Read from scope object
-            // Check this FIRST to use the new scope object system for closure captures
-            if let Some(analysis) = &ctx.scope_capture_analysis {
+            // Check the enclosing scope analysis FIRST - for variables captured FROM parent scope
+            if let Some(analysis) = &ctx.enclosing_scope_capture_analysis {
                 if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
                     // Inside a closure body: get the scope pointer from the closure's captures
                     if let Some(closure_capture_idx_val) = ctx.closure_scope_indices.get(&scope_id).copied() {
@@ -703,19 +709,23 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                                 &[(crate::types::I64, &scope_ptr), (I32, &var_index_str)],
                             ));
                         }
-                    } else {
-                        // Not in a closure body: get from the scope pointer directly
-                        // Scope is already allocated when entering the block
-                        if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
-                            let blk = ctx.block();
-                            // Read the variable from the scope object
-                            let var_index_str = var_index.to_string();
-                            return Ok(blk.call(
-                                DOUBLE,
-                                "js_scope_object_get_f64",
-                                &[(crate::types::I64, &scope_ptr_slot), (I32, &var_index_str)],
-                            ));
-                        }
+                    }
+                }
+            }
+
+            // Also check own scope_capture_analysis for variables declared inside this closure
+            if let Some(analysis) = &ctx.scope_capture_analysis {
+                if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
+                    // Scope is already allocated when entering the block
+                    if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
+                        let blk = ctx.block();
+                        // Read the variable from the scope object
+                        let var_index_str = var_index.to_string();
+                        return Ok(blk.call(
+                            DOUBLE,
+                            "js_scope_object_get_f64",
+                            &[(crate::types::I64, &scope_ptr_slot), (I32, &var_index_str)],
+                        ));
                     }
                 }
             }
@@ -840,8 +850,8 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // Scope objects first (new system), then closure captures (old system),
             // then locals, then module globals.
 
-            // NEW SYSTEM: Check scope object local first
-            if let Some(analysis) = &ctx.scope_capture_analysis {
+            // NEW SYSTEM: Check enclosing scope capture analysis FIRST - for variables captured FROM parent scope
+            if let Some(analysis) = &ctx.enclosing_scope_capture_analysis {
                 if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
                     // Inside a closure body: get the scope pointer from the closure's captures
                     if let Some(closure_capture_idx_val) = ctx.closure_scope_indices.get(&scope_id).copied() {
@@ -859,19 +869,23 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                             );
                             return Ok(v);
                         }
-                    } else {
-                        // Not in a closure body: write to the scope pointer directly
-                        // Scope is already allocated when entering the block
-                        if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
-                            let blk = ctx.block();
-                            // Write the variable to the scope object
-                            let var_index_str = var_index.to_string();
-                            blk.call_void(
-                                "js_scope_object_set_f64",
-                                &[(crate::types::I64, &scope_ptr_slot), (I32, &var_index_str), (DOUBLE, &v)],
-                            );
-                            return Ok(v);
-                        }
+                    }
+                }
+            }
+
+            // Also check own scope_capture_analysis for variables declared inside this closure
+            if let Some(analysis) = &ctx.scope_capture_analysis {
+                if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
+                    // Scope is already allocated when entering the block
+                    if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
+                        let blk = ctx.block();
+                        // Write the variable to the scope object
+                        let var_index_str = var_index.to_string();
+                        blk.call_void(
+                            "js_scope_object_set_f64",
+                            &[(crate::types::I64, &scope_ptr_slot), (I32, &var_index_str), (DOUBLE, &v)],
+                        );
+                        return Ok(v);
                     }
                 }
             }

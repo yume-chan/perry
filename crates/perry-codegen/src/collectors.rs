@@ -300,6 +300,19 @@ pub(crate) fn collect_closures_in_stmts(
     }
 }
 
+/// Walk parameter default expressions and collect closures within them.
+pub(crate) fn collect_closures_in_params(
+    params: &[perry_hir::Param],
+    seen: &mut HashSet<perry_types::FuncId>,
+    out: &mut Vec<(perry_types::FuncId, perry_hir::Expr)>,
+) {
+    for param in params {
+        if let Some(default_expr) = &param.default {
+            collect_closures_in_expr(default_expr, seen, out);
+        }
+    }
+}
+
 fn collect_closures_in_expr(
     e: &perry_hir::Expr,
     seen: &mut HashSet<perry_types::FuncId>,
@@ -315,10 +328,16 @@ fn collect_closures_in_expr(
         collect_closures_in_expr(sub, seen, out);
     };
     match e {
-        Expr::Closure { func_id, body, .. } => {
+        Expr::Closure { func_id, params, body, .. } => {
             if seen.insert(*func_id) {
                 out.push((*func_id, e.clone()));
             } else {
+            }
+            // Recurse into parameter defaults to collect closures within them
+            for param in params {
+                if let Some(default_expr) = &param.default {
+                    collect_closures_in_expr(default_expr, seen, out);
+                }
             }
             // Recurse into the closure body so nested closures are
             // collected too.
