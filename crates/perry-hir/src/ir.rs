@@ -4,7 +4,7 @@
 //! easier to compile to native code than the raw AST.
 
 use perry_types::{FuncId, GlobalId, LocalId, Type, TypeParam};
-use crate::scope::CaptureAnalysis;
+use crate::scope::{CaptureAnalysis, ScopeId};
 
 /// TypedArray element-kind tags. Must match `crates/perry-runtime/src/typedarray.rs`.
 pub const TYPED_ARRAY_KIND_INT8: u8 = 0;
@@ -689,21 +689,30 @@ pub enum Stmt {
     Expr(Expr),
     /// Return statement
     Return(Option<Expr>),
-    /// If statement
+    /// Bare block statement with optional scope (for let/const shadowing)
+    Block {
+        scope: Option<ScopeId>,
+        body: Vec<Stmt>,
+    },
+    /// If statement with optional scopes for then and else branches
     If {
         condition: Expr,
         then_branch: Vec<Stmt>,
+        then_scope: Option<ScopeId>,
         else_branch: Option<Vec<Stmt>>,
+        else_scope: Option<ScopeId>,
     },
     /// While loop
     While {
         condition: Expr,
         body: Vec<Stmt>,
+        scope: Option<ScopeId>,
     },
     /// Do-while loop (body runs at least once, condition checked at the end)
     DoWhile {
         body: Vec<Stmt>,
         condition: Expr,
+        scope: Option<ScopeId>,
     },
     /// For loop (lowered from various JS for loops)
     For {
@@ -711,6 +720,7 @@ pub enum Stmt {
         condition: Option<Expr>,
         update: Option<Expr>,
         body: Vec<Stmt>,
+        scope: Option<ScopeId>,
     },
     /// Labeled statement: `label: for/while/do/block`
     Labeled {
@@ -727,16 +737,20 @@ pub enum Stmt {
     LabeledContinue(String),
     /// Throw statement
     Throw(Expr),
-    /// Try-catch-finally
+    /// Try-catch-finally with optional scopes for each block
     Try {
         body: Vec<Stmt>,
+        try_scope: Option<ScopeId>,
         catch: Option<CatchClause>,
+        catch_scope: Option<ScopeId>,
         finally: Option<Vec<Stmt>>,
+        finally_scope: Option<ScopeId>,
     },
     /// Switch statement
     Switch {
         discriminant: Expr,
         cases: Vec<SwitchCase>,
+        scope: Option<ScopeId>,
     },
 }
 

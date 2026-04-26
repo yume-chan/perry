@@ -33,7 +33,7 @@ fn stmt_is_pure(s: &Stmt) -> bool {
         Stmt::Expr(e) => expr_is_pure(e),
         Stmt::Let { init, .. } => init.as_ref().map_or(true, expr_is_pure),
         Stmt::Return(_) | Stmt::Throw(_) => false,
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             expr_is_pure(condition)
                 && then_branch.iter().all(stmt_is_pure)
                 && else_branch.as_ref().map_or(true, |b| b.iter().all(stmt_is_pure))
@@ -41,13 +41,13 @@ fn stmt_is_pure(s: &Stmt) -> bool {
         // Nested loops: their own lowering applies the same analysis,
         // so reporting the outer body as pure when the inner is pure
         // is consistent (the inner loop will also get its barrier).
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             expr_is_pure(condition) && body.iter().all(stmt_is_pure)
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             expr_is_pure(condition) && body.iter().all(stmt_is_pure)
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             init.as_deref().map_or(true, stmt_is_pure)
                 && condition.as_ref().map_or(true, expr_is_pure)
                 && update.as_ref().map_or(true, expr_is_pure)

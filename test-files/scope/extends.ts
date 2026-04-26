@@ -12,7 +12,6 @@ class B extends A {
 
 new B().fn()
 
-
 function fn(a = 'Hello') {
   console.log(a, 'should be Hello');
 }

@@ -2078,7 +2078,7 @@ impl WasmModuleEmitter {
             Stmt::Return(None) => {
                 out.push_str(&format!("{pad}    return u64ToF64(TAG_UNDEFINED);\n"));
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 let cond = self.emit_js_expr(condition, locals);
                 out.push_str(&format!("{pad}    if (toJsValue({cond})) {{\n"));
                 for s in then_branch {
@@ -2092,7 +2092,7 @@ impl WasmModuleEmitter {
                 }
                 out.push_str(&format!("{pad}    }}\n"));
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 let cond = self.emit_js_expr(condition, locals);
                 out.push_str(&format!("{pad}    while (toJsValue({cond})) {{\n"));
                 for s in body {
@@ -2100,7 +2100,7 @@ impl WasmModuleEmitter {
                 }
                 out.push_str(&format!("{pad}    }}\n"));
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 out.push_str(&format!("{pad}    {{\n"));
                 if let Some(init_stmt) = init {
                     self.emit_js_stmt(out, init_stmt, locals, indent + 1);
@@ -2117,7 +2117,7 @@ impl WasmModuleEmitter {
                 out.push_str(&format!("{pad}      }}\n"));
                 out.push_str(&format!("{pad}    }}\n"));
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 out.push_str(&format!("{pad}    try {{\n"));
                 for s in body {
                     self.emit_js_stmt(out, s, locals, indent + 1);
@@ -2151,7 +2151,7 @@ impl WasmModuleEmitter {
             Stmt::Continue => { out.push_str(&format!("{pad}    continue;\n")); }
             Stmt::LabeledBreak(label) => { out.push_str(&format!("{pad}    break {};\n", label)); }
             Stmt::LabeledContinue(label) => { out.push_str(&format!("{pad}    continue {};\n", label)); }
-            Stmt::DoWhile { body, condition } => {
+            Stmt::DoWhile { body, condition, .. } => {
                 out.push_str(&format!("{pad}    do {{\n"));
                 for s in body {
                     self.emit_js_stmt(out, s, locals, indent + 1);
@@ -2164,7 +2164,7 @@ impl WasmModuleEmitter {
                 self.emit_js_stmt(out, body, locals, indent + 1);
                 out.push_str(&format!("{pad}    }}\n"));
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 let disc = self.emit_js_expr(discriminant, locals);
                 out.push_str(&format!("{pad}    switch (toJsValue({disc})) {{\n"));
                 for case in cases {
@@ -2179,6 +2179,11 @@ impl WasmModuleEmitter {
                     }
                 }
                 out.push_str(&format!("{pad}    }}\n"));
+            }
+            Stmt::Block { body, .. } => {
+                for s in body {
+                    self.emit_js_stmt(out, s, locals, indent);
+                }
             }
         }
     }
@@ -2708,42 +2713,45 @@ impl WasmModuleEmitter {
             Stmt::Return(e) => {
                 if let Some(e) = e { self.collect_strings_in_expr(e); }
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 self.collect_strings_in_expr(condition);
                 self.collect_strings_in_stmts(then_branch);
                 if let Some(eb) = else_branch { self.collect_strings_in_stmts(eb); }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 self.collect_strings_in_expr(condition);
                 self.collect_strings_in_stmts(body);
             }
-            Stmt::DoWhile { body, condition } => {
+            Stmt::DoWhile { body, condition, .. } => {
                 self.collect_strings_in_stmts(body);
                 self.collect_strings_in_expr(condition);
             }
             Stmt::Labeled { body, .. } => {
                 self.collect_strings_in_stmt(body);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(i) = init { self.collect_strings_in_stmt(i); }
                 if let Some(c) = condition { self.collect_strings_in_expr(c); }
                 if let Some(u) = update { self.collect_strings_in_expr(u); }
                 self.collect_strings_in_stmts(body);
             }
             Stmt::Throw(e) => self.collect_strings_in_expr(e),
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 self.collect_strings_in_stmts(body);
                 if let Some(c) = catch {
                     self.collect_strings_in_stmts(&c.body);
                 }
                 if let Some(f) = finally { self.collect_strings_in_stmts(f); }
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 self.collect_strings_in_expr(discriminant);
                 for case in cases {
                     if let Some(t) = &case.test { self.collect_strings_in_expr(t); }
                     self.collect_strings_in_stmts(&case.body);
                 }
+            }
+            Stmt::Block { body, .. } => {
+                self.collect_strings_in_stmts(body);
             }
             Stmt::Break | Stmt::Continue | Stmt::LabeledBreak(_) | Stmt::LabeledContinue(_) => {}
         }
@@ -3604,7 +3612,7 @@ impl<'a> FuncEmitCtx<'a> {
                 }
                 func.instruction(&Instruction::Return);
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 // Convert to i32 boolean via is_truthy
                 self.emit_frame_begin(func, 1);
                 self.emit_store_arg(func, 0, condition);
@@ -3623,7 +3631,7 @@ impl<'a> FuncEmitCtx<'a> {
                 self.block_depth -= 1;
                 func.instruction(&Instruction::End);
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 // block $break
                 //   loop $continue
                 //     <condition>
@@ -3669,7 +3677,7 @@ impl<'a> FuncEmitCtx<'a> {
                 self.block_depth -= 1;
                 func.instruction(&Instruction::End); // end block
             }
-            Stmt::DoWhile { body, condition } => {
+            Stmt::DoWhile { body, condition, .. } => {
                 // block $break
                 //   loop $continue
                 //     <body>
@@ -3719,7 +3727,7 @@ impl<'a> FuncEmitCtx<'a> {
                 // If the body wasn't a loop, the pending label is stale; drop it.
                 self.pending_label = None;
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 // <init>
                 // block $break
                 //   loop $continue
@@ -3810,7 +3818,7 @@ impl<'a> FuncEmitCtx<'a> {
                     func.instruction(&Instruction::Return);
                 }
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 // Bridge-based exception handling:
                 // try_start(); <try body>; try_end();
                 // if has_exception(): <bind catch param>; <catch body>
@@ -3863,7 +3871,7 @@ impl<'a> FuncEmitCtx<'a> {
                     }
                 }
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 // Compile switch as cascading if/else blocks
                 // Strategy: store discriminant in a local-like pattern, compare each case
                 // Since we can't easily allocate a local here, we use nested blocks + br_table approach
@@ -3906,6 +3914,11 @@ impl<'a> FuncEmitCtx<'a> {
                 self.break_depth.pop();
                 self.block_depth -= 1;
                 func.instruction(&Instruction::End);
+            }
+            Stmt::Block { body, .. } => {
+                for s in body {
+                    self.emit_stmt(func, s, in_returning_func);
+                }
             }
         }
     }
@@ -7287,7 +7300,7 @@ fn collect_locals(stmts: &[Stmt], map: &mut BTreeMap<LocalId, u32>, count: &mut 
                 }
                 collect_locals(body, map, count, offset);
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 collect_locals(body, map, count, offset);
                 if let Some(c) = catch {
                     if let Some((id, _)) = &c.param {
@@ -7326,27 +7339,27 @@ fn collect_closures_from_stmts(
             Stmt::Return(e) => {
                 if let Some(e) = e { collect_closures_from_expr(e, out); }
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 collect_closures_from_expr(condition, out);
                 collect_closures_from_stmts(then_branch, out);
                 if let Some(eb) = else_branch { collect_closures_from_stmts(eb, out); }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 collect_closures_from_expr(condition, out);
                 collect_closures_from_stmts(body, out);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(i) = init { collect_closures_from_stmts(std::slice::from_ref(i.as_ref()), out); }
                 if let Some(c) = condition { collect_closures_from_expr(c, out); }
                 if let Some(u) = update { collect_closures_from_expr(u, out); }
                 collect_closures_from_stmts(body, out);
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 collect_closures_from_stmts(body, out);
                 if let Some(c) = catch { collect_closures_from_stmts(&c.body, out); }
                 if let Some(f) = finally { collect_closures_from_stmts(f, out); }
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 collect_closures_from_expr(discriminant, out);
                 for case in cases {
                     if let Some(t) = &case.test { collect_closures_from_expr(t, out); }
@@ -7473,7 +7486,7 @@ fn has_return(stmt: &Stmt) -> bool {
         Stmt::While { body, .. } | Stmt::For { body, .. } => {
             body.iter().any(has_return)
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             body.iter().any(has_return) ||
             catch.as_ref().map_or(false, |c| c.body.iter().any(has_return)) ||
             finally.as_ref().map_or(false, |f| f.iter().any(has_return))

@@ -155,14 +155,14 @@ fn collect_nested_closure_boxed_vars_in_stmt(
                 collect_nested_closure_boxed_vars_in_expr(e, out);
             }
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_nested_closure_boxed_vars_in_expr(condition, out);
             collect_nested_closure_boxed_vars_in_stmts(then_branch, out);
             if let Some(eb) = else_branch {
                 collect_nested_closure_boxed_vars_in_stmts(eb, out);
             }
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(i) = init {
                 collect_nested_closure_boxed_vars_in_stmt(i, out);
             }
@@ -174,11 +174,11 @@ fn collect_nested_closure_boxed_vars_in_stmt(
             }
             collect_nested_closure_boxed_vars_in_stmts(body, out);
         }
-        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+        Stmt::While { condition, body, .. }| Stmt::DoWhile { body, condition, .. } => {
             collect_nested_closure_boxed_vars_in_expr(condition, out);
             collect_nested_closure_boxed_vars_in_stmts(body, out);
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             collect_nested_closure_boxed_vars_in_stmts(body, out);
             if let Some(c) = catch {
                 collect_nested_closure_boxed_vars_in_stmts(&c.body, out);
@@ -187,7 +187,7 @@ fn collect_nested_closure_boxed_vars_in_stmt(
                 collect_nested_closure_boxed_vars_in_stmts(f, out);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_nested_closure_boxed_vars_in_expr(discriminant, out);
             for case in cases {
                 if let Some(t) = &case.test {
@@ -343,7 +343,7 @@ fn collect_self_recursive_closure_ids(
             Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
                 collect_self_recursive_closure_ids(body, closure_refs, out);
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 collect_self_recursive_closure_ids(body, closure_refs, out);
                 if let Some(c) = catch {
                     collect_self_recursive_closure_ids(&c.body, closure_refs, out);
@@ -384,7 +384,7 @@ fn collect_for_init_ids(
             Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
                 collect_for_init_ids(body, out);
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 collect_for_init_ids(body, out);
                 if let Some(c) = catch {
                     collect_for_init_ids(&c.body, out);
@@ -437,14 +437,14 @@ fn collect_closure_refs_and_writes_in_stmt(
                 collect_closure_refs_and_writes_in_expr(e, refs, writes);
             }
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_closure_refs_and_writes_in_expr(condition, refs, writes);
             collect_closure_refs_and_writes_in_stmts(then_branch, refs, writes);
             if let Some(eb) = else_branch {
                 collect_closure_refs_and_writes_in_stmts(eb, refs, writes);
             }
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(i) = init {
                 collect_closure_refs_and_writes_in_stmt(i, refs, writes);
             }
@@ -456,11 +456,11 @@ fn collect_closure_refs_and_writes_in_stmt(
             }
             collect_closure_refs_and_writes_in_stmts(body, refs, writes);
         }
-        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+        Stmt::While { condition, body, .. }| Stmt::DoWhile { body, condition, .. } => {
             collect_closure_refs_and_writes_in_expr(condition, refs, writes);
             collect_closure_refs_and_writes_in_stmts(body, refs, writes);
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             collect_closure_refs_and_writes_in_stmts(body, refs, writes);
             if let Some(c) = catch {
                 collect_closure_refs_and_writes_in_stmts(&c.body, refs, writes);
@@ -469,7 +469,7 @@ fn collect_closure_refs_and_writes_in_stmt(
                 collect_closure_refs_and_writes_in_stmts(f, refs, writes);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_closure_refs_and_writes_in_expr(discriminant, refs, writes);
             for case in cases {
                 if let Some(t) = &case.test {
@@ -631,14 +631,14 @@ fn collect_outer_writes_in_stmt(
                 collect_outer_writes_in_expr(e, out);
             }
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_outer_writes_in_expr(condition, out);
             collect_outer_writes_in_stmts(then_branch, out);
             if let Some(eb) = else_branch {
                 collect_outer_writes_in_stmts(eb, out);
             }
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(i) = init {
                 collect_outer_writes_in_stmt(i, out);
             }
@@ -650,11 +650,11 @@ fn collect_outer_writes_in_stmt(
             }
             collect_outer_writes_in_stmts(body, out);
         }
-        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+        Stmt::While { condition, body, .. }| Stmt::DoWhile { body, condition, .. } => {
             collect_outer_writes_in_expr(condition, out);
             collect_outer_writes_in_stmts(body, out);
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             collect_outer_writes_in_stmts(body, out);
             if let Some(c) = catch {
                 collect_outer_writes_in_stmts(&c.body, out);
@@ -663,7 +663,7 @@ fn collect_outer_writes_in_stmt(
                 collect_outer_writes_in_stmts(f, out);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_outer_writes_in_expr(discriminant, out);
             for case in cases {
                 if let Some(t) = &case.test {
@@ -798,14 +798,14 @@ fn collect_write_ids_in_stmt(
                 collect_write_ids_in_expr(e, out);
             }
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_write_ids_in_expr(condition, out);
             collect_write_ids_in_stmts(then_branch, out);
             if let Some(eb) = else_branch {
                 collect_write_ids_in_stmts(eb, out);
             }
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(i) = init {
                 collect_write_ids_in_stmt(i, out);
             }
@@ -817,11 +817,11 @@ fn collect_write_ids_in_stmt(
             }
             collect_write_ids_in_stmts(body, out);
         }
-        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+        Stmt::While { condition, body, .. }| Stmt::DoWhile { body, condition, .. } => {
             collect_write_ids_in_expr(condition, out);
             collect_write_ids_in_stmts(body, out);
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             collect_write_ids_in_stmts(body, out);
             if let Some(c) = catch {
                 collect_write_ids_in_stmts(&c.body, out);
@@ -830,7 +830,7 @@ fn collect_write_ids_in_stmt(
                 collect_write_ids_in_stmts(f, out);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_write_ids_in_expr(discriminant, out);
             for case in cases {
                 if let Some(t) = &case.test {
@@ -971,7 +971,7 @@ pub(crate) fn collect_let_types_in_stmts(
             Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
                 collect_let_types_in_stmts(body, out);
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 collect_let_types_in_stmts(body, out);
                 if let Some(c) = catch {
                     collect_let_types_in_stmts(&c.body, out);

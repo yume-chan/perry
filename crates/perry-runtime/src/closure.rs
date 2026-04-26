@@ -264,8 +264,6 @@ pub extern "C" fn js_closure_call1(closure: *const ClosureHeader, arg0: f64) -> 
         unsafe { (*closure).arity }
     };
 
-eprint!("arity: {}, func_ptr: {:p}\n", arity, func_ptr);
-
     match arity {
         0 => {
             // This shouldn't normally happen, but handle it gracefully

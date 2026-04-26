@@ -41,6 +41,8 @@ fn build_default_param_stmts(params: &[Param]) -> Vec<Stmt> {
                 Box::new(default_expr.clone()),
             ))],
             else_branch: None,
+            then_scope: None,
+            else_scope: None,
         });
     }
     out
@@ -395,6 +397,9 @@ pub(crate) fn lower_fn_decl(ctx: &mut LoweringContext, fn_decl: &ast::FnDecl) ->
     }
     all_locals.extend(scope_locals);
     let capture_analysis = crate::capture_analysis::analyze_captures(&body, &all_locals);
+    
+    // Assign scope IDs to HIR statements
+    crate::capture_analysis::assign_scopes_to_stmts(&mut body, &capture_analysis);
 
     // Restore previous enclosing function
     ctx.current_enclosing_func_id = prev_enclosing;
@@ -1987,6 +1992,8 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 condition,
                 then_branch,
                 else_branch,
+                then_scope: None,
+                else_scope: None,
             });
         }
         ast::Stmt::Block(block) => {
@@ -2285,12 +2292,12 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 ctx.pop_block_scope(mark);
                 stmts
             };
-            result.push(Stmt::While { condition, body });
+            result.push(Stmt::While { condition, body, scope: None });
         }
         ast::Stmt::DoWhile(do_while_stmt) => {
             let body = lower_body_stmt(ctx, &do_while_stmt.body)?;
             let condition = lower_expr(ctx, &do_while_stmt.test)?;
-            result.push(Stmt::DoWhile { body, condition });
+            result.push(Stmt::DoWhile { body, condition, scope: None });
         }
         ast::Stmt::Labeled(labeled_stmt) => {
             let label = labeled_stmt.label.sym.to_string();
@@ -2364,7 +2371,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
             let update = for_stmt.update.as_ref().map(|e| lower_expr(ctx, e)).transpose()?;
             let body = lower_body_stmt(ctx, &for_stmt.body)?;
             ctx.pop_block_scope(for_scope_mark);
-            result.push(Stmt::For { init, condition, update, body });
+            result.push(Stmt::For { init, condition, update, body, scope: None });
         }
         ast::Stmt::Try(try_stmt) => {
             // try body is its own lexical scope
@@ -2400,7 +2407,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 None
             };
 
-            result.push(Stmt::Try { body, catch, finally });
+            result.push(Stmt::Try { body, catch, finally, try_scope: None, catch_scope: None, finally_scope: None });
         }
         ast::Stmt::Throw(throw_stmt) => {
             let expr = lower_expr(ctx, &throw_stmt.arg)?;
@@ -2423,7 +2430,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 cases.push(SwitchCase { test, body });
             }
 
-            result.push(Stmt::Switch { discriminant, cases });
+            result.push(Stmt::Switch { discriminant, cases, scope: None });
         }
         ast::Stmt::ForOf(for_of_stmt) => {
             // --- Iterator-protocol path for generator function calls ---
@@ -2531,6 +2538,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                         }),
                     },
                     body: body_stmts,
+                    scope: None,
                 });
 
                 ctx.pop_block_scope(scope_mark);
@@ -2858,6 +2866,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                     prefix: true,
                 }),
                 body: loop_body,
+                scope: None,
             });
             ctx.pop_block_scope(for_scope_mark);
         }
@@ -2928,6 +2937,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                     prefix: true,
                 }),
                 body: loop_body,
+                scope: None,
             });
             ctx.pop_block_scope(for_scope_mark);
         }

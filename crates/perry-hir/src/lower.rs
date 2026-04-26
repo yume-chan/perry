@@ -1469,22 +1469,22 @@ fn widen_mutable_captures_stmt(stmt: &mut Stmt, scope_mutable: &std::collections
         Stmt::Expr(expr) => widen_mutable_captures_expr(expr, scope_mutable),
         Stmt::Return(Some(expr)) => widen_mutable_captures_expr(expr, scope_mutable),
         Stmt::Throw(expr) => widen_mutable_captures_expr(expr, scope_mutable),
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             widen_mutable_captures_expr(condition, scope_mutable);
             widen_mutable_captures_stmts(then_branch);
             if let Some(else_stmts) = else_branch {
                 widen_mutable_captures_stmts(else_stmts);
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             widen_mutable_captures_expr(condition, scope_mutable);
             widen_mutable_captures_stmts(body);
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             widen_mutable_captures_stmts(body);
             widen_mutable_captures_expr(condition, scope_mutable);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 widen_mutable_captures_stmt(init_stmt, scope_mutable);
             }
@@ -1496,7 +1496,7 @@ fn widen_mutable_captures_stmt(stmt: &mut Stmt, scope_mutable: &std::collections
             }
             widen_mutable_captures_stmts(body);
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             widen_mutable_captures_stmts(body);
             if let Some(catch_clause) = catch {
                 widen_mutable_captures_stmts(&mut catch_clause.body);
@@ -1505,7 +1505,7 @@ fn widen_mutable_captures_stmt(stmt: &mut Stmt, scope_mutable: &std::collections
                 widen_mutable_captures_stmts(finally_stmts);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             widen_mutable_captures_expr(discriminant, scope_mutable);
             for case in cases {
                 if let Some(test) = &mut case.test {
@@ -1711,7 +1711,7 @@ fn collect_closure_assigned_stmt(stmt: &Stmt, out: &mut std::collections::HashSe
         Stmt::Expr(expr) => collect_closure_assigned_expr(expr, out),
         Stmt::Return(Some(expr)) => collect_closure_assigned_expr(expr, out),
         Stmt::Throw(expr) => collect_closure_assigned_expr(expr, out),
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_closure_assigned_expr(condition, out);
             for s in then_branch {
                 collect_closure_assigned_stmt(s, out);
@@ -1722,13 +1722,13 @@ fn collect_closure_assigned_stmt(stmt: &Stmt, out: &mut std::collections::HashSe
                 }
             }
         }
-        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+        Stmt::While { condition, body, .. } | Stmt::DoWhile { body, condition, .. } => {
             collect_closure_assigned_expr(condition, out);
             for s in body {
                 collect_closure_assigned_stmt(s, out);
             }
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 collect_closure_assigned_stmt(init_stmt, out);
             }
@@ -1742,7 +1742,7 @@ fn collect_closure_assigned_stmt(stmt: &Stmt, out: &mut std::collections::HashSe
                 collect_closure_assigned_stmt(s, out);
             }
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             for s in body {
                 collect_closure_assigned_stmt(s, out);
             }
@@ -1757,7 +1757,7 @@ fn collect_closure_assigned_stmt(stmt: &Stmt, out: &mut std::collections::HashSe
                 }
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_closure_assigned_expr(discriminant, out);
             for case in cases {
                 if let Some(ref test) = case.test {
@@ -1950,29 +1950,29 @@ fn collect_closure_captures_stmt(stmt: &Stmt, out: &mut std::collections::HashSe
         Stmt::Expr(expr) => collect_closure_captures_expr(expr, out),
         Stmt::Return(Some(expr)) => collect_closure_captures_expr(expr, out),
         Stmt::Throw(expr) => collect_closure_captures_expr(expr, out),
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_closure_captures_expr(condition, out);
             for s in then_branch { collect_closure_captures_stmt(s, out); }
             if let Some(else_stmts) = else_branch {
                 for s in else_stmts { collect_closure_captures_stmt(s, out); }
             }
         }
-        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+        Stmt::While { condition, body, .. } | Stmt::DoWhile { body, condition, .. } => {
             collect_closure_captures_expr(condition, out);
             for s in body { collect_closure_captures_stmt(s, out); }
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init { collect_closure_captures_stmt(init_stmt, out); }
             if let Some(cond) = condition { collect_closure_captures_expr(cond, out); }
             if let Some(upd) = update { collect_closure_captures_expr(upd, out); }
             for s in body { collect_closure_captures_stmt(s, out); }
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             for s in body { collect_closure_captures_stmt(s, out); }
             if let Some(cc) = catch { for s in &cc.body { collect_closure_captures_stmt(s, out); } }
             if let Some(fs) = finally { for s in fs { collect_closure_captures_stmt(s, out); } }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_closure_captures_expr(discriminant, out);
             for case in cases {
                 if let Some(ref test) = case.test { collect_closure_captures_expr(test, out); }
@@ -2117,29 +2117,29 @@ fn collect_scope_level_assigns_stmt(stmt: &Stmt, out: &mut std::collections::Has
         Stmt::Expr(expr) => collect_scope_level_assigns_expr(expr, out),
         Stmt::Return(Some(expr)) => collect_scope_level_assigns_expr(expr, out),
         Stmt::Throw(expr) => collect_scope_level_assigns_expr(expr, out),
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_scope_level_assigns_expr(condition, out);
             for s in then_branch { collect_scope_level_assigns_stmt(s, out); }
             if let Some(else_stmts) = else_branch {
                 for s in else_stmts { collect_scope_level_assigns_stmt(s, out); }
             }
         }
-        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+        Stmt::While { condition, body, .. } | Stmt::DoWhile { body, condition, .. } => {
             collect_scope_level_assigns_expr(condition, out);
             for s in body { collect_scope_level_assigns_stmt(s, out); }
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init { collect_scope_level_assigns_stmt(init_stmt, out); }
             if let Some(cond) = condition { collect_scope_level_assigns_expr(cond, out); }
             if let Some(upd) = update { collect_scope_level_assigns_expr(upd, out); }
             for s in body { collect_scope_level_assigns_stmt(s, out); }
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             for s in body { collect_scope_level_assigns_stmt(s, out); }
             if let Some(cc) = catch { for s in &cc.body { collect_scope_level_assigns_stmt(s, out); } }
             if let Some(fs) = finally { for s in fs { collect_scope_level_assigns_stmt(s, out); } }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_scope_level_assigns_expr(discriminant, out);
             for case in cases {
                 if let Some(ref test) = case.test { collect_scope_level_assigns_expr(test, out); }
@@ -2190,7 +2190,7 @@ fn collect_closure_assigned_in_closure_body_stmt(stmt: &Stmt, out: &mut std::col
         Stmt::Expr(expr) => collect_closure_assigned_in_body_expr(expr, out),
         Stmt::Return(Some(expr)) => collect_closure_assigned_in_body_expr(expr, out),
         Stmt::Throw(expr) => collect_closure_assigned_in_body_expr(expr, out),
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_closure_assigned_in_body_expr(condition, out);
             for s in then_branch {
                 collect_closure_assigned_in_closure_body_stmt(s, out);
@@ -2201,13 +2201,13 @@ fn collect_closure_assigned_in_closure_body_stmt(stmt: &Stmt, out: &mut std::col
                 }
             }
         }
-        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+        Stmt::While { condition, body, .. } | Stmt::DoWhile { body, condition, .. } => {
             collect_closure_assigned_in_body_expr(condition, out);
             for s in body {
                 collect_closure_assigned_in_closure_body_stmt(s, out);
             }
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 collect_closure_assigned_in_closure_body_stmt(init_stmt, out);
             }
@@ -2221,7 +2221,7 @@ fn collect_closure_assigned_in_closure_body_stmt(stmt: &Stmt, out: &mut std::col
                 collect_closure_assigned_in_closure_body_stmt(s, out);
             }
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             for s in body {
                 collect_closure_assigned_in_closure_body_stmt(s, out);
             }
@@ -2236,7 +2236,7 @@ fn collect_closure_assigned_in_closure_body_stmt(stmt: &Stmt, out: &mut std::col
                 }
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_closure_assigned_in_body_expr(discriminant, out);
             for case in cases {
                 if let Some(ref test) = case.test {
@@ -2491,18 +2491,18 @@ fn populate_closures_in_stmt_with_outer(stmt: &mut Stmt, func_map: &std::collect
         Stmt::Expr(expr) => populate_closures_in_expr_with_outer(expr, func_map, outer_closure_analysis),
         Stmt::Return(Some(expr)) => populate_closures_in_expr_with_outer(expr, func_map, outer_closure_analysis),
         Stmt::Throw(expr) => populate_closures_in_expr_with_outer(expr, func_map, outer_closure_analysis),
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             populate_closures_in_expr_with_outer(condition, func_map, outer_closure_analysis);
             populate_closures_in_stmts_with_outer(then_branch, func_map, outer_closure_analysis);
             if let Some(else_stmts) = else_branch {
                 populate_closures_in_stmts_with_outer(else_stmts, func_map, outer_closure_analysis);
             }
         }
-        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+        Stmt::While { condition, body, .. } | Stmt::DoWhile { body, condition, .. } => {
             populate_closures_in_expr_with_outer(condition, func_map, outer_closure_analysis);
             populate_closures_in_stmts_with_outer(body, func_map, outer_closure_analysis);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 populate_closures_in_stmt_with_outer(init_stmt, func_map, outer_closure_analysis);
             }
@@ -2514,7 +2514,7 @@ fn populate_closures_in_stmt_with_outer(stmt: &mut Stmt, func_map: &std::collect
             }
             populate_closures_in_stmts_with_outer(body, func_map, outer_closure_analysis);
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             populate_closures_in_stmts_with_outer(body, func_map, outer_closure_analysis);
             if let Some(catch_clause) = catch {
                 populate_closures_in_stmts_with_outer(&mut catch_clause.body, func_map, outer_closure_analysis);
@@ -4273,6 +4273,8 @@ fn lower_stmt(
                 condition,
                 then_branch,
                 else_branch,
+                then_scope: None,
+                else_scope: None,
             });
         }
         ast::Stmt::While(while_stmt) => {
@@ -4285,12 +4287,12 @@ fn lower_stmt(
                 ctx.pop_block_scope(mark);
                 stmts
             };
-            module.init.push(Stmt::While { condition, body });
+            module.init.push(Stmt::While { condition, body, scope: None });
         }
         ast::Stmt::DoWhile(do_while_stmt) => {
             let body = lower_body_stmt(ctx, &do_while_stmt.body)?;
             let condition = lower_expr(ctx, &do_while_stmt.test)?;
-            module.init.push(Stmt::DoWhile { body, condition });
+            module.init.push(Stmt::DoWhile { body, condition, scope: None });
         }
         ast::Stmt::Labeled(labeled_stmt) => {
             let label = labeled_stmt.label.sym.to_string();
@@ -4346,7 +4348,7 @@ fn lower_stmt(
             let update = for_stmt.update.as_ref().map(|e| lower_expr(ctx, e)).transpose()?;
             let body = lower_body_stmt(ctx, &for_stmt.body)?;
             ctx.pop_block_scope(for_scope_mark);
-            module.init.push(Stmt::For { init, condition, update, body });
+            module.init.push(Stmt::For { init, condition, update, body, scope: None });
         }
         ast::Stmt::Block(block) => {
             // Bare block: introduce a lexical scope so inner let/const shadow
@@ -4387,7 +4389,7 @@ fn lower_stmt(
                 None
             };
 
-            module.init.push(Stmt::Try { body, catch, finally });
+            module.init.push(Stmt::Try { body, catch, finally, try_scope: None, catch_scope: None, finally_scope: None });
         }
         ast::Stmt::Throw(throw_stmt) => {
             let expr = lower_expr(ctx, &throw_stmt.arg)?;
@@ -4410,7 +4412,7 @@ fn lower_stmt(
                 cases.push(SwitchCase { test, body });
             }
 
-            module.init.push(Stmt::Switch { discriminant, cases });
+            module.init.push(Stmt::Switch { discriminant, cases, scope: None });
         }
         ast::Stmt::ForOf(for_of_stmt) => {
             // --- Iterator protocol path for generators ---
@@ -4557,6 +4559,7 @@ fn lower_stmt(
                         }),
                     },
                     body: body_stmts,
+                    scope: None,
                 });
 
                 ctx.pop_block_scope(for_scope_mark);
@@ -4929,6 +4932,7 @@ fn lower_stmt(
                     prefix: true,
                 }),
                 body: loop_body,
+                scope: None,
             });
             ctx.pop_block_scope(for_scope_mark);
         }
@@ -5012,6 +5016,7 @@ fn lower_stmt(
                     prefix: true,
                 }),
                 body: loop_body,
+                scope: None,
             });
             ctx.pop_block_scope(for_scope_mark);
         }

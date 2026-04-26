@@ -3,4 +3,4 @@ function a(v: number) {
   return fact(v);
 }
 
-console.log(a(5));
+console.log(a(5), 'should be 120');

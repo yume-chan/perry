@@ -1207,16 +1207,25 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                 }
 
                 let recv_box = lower_expr(ctx, object)?;
-                let mut lowered_args: Vec<String> = Vec::with_capacity(args.len() + 1);
-                lowered_args.push(recv_box.clone());
+                let mut base_args: Vec<String> = Vec::with_capacity(args.len() + 1);
+                base_args.push(recv_box.clone());
                 for a in args {
-                    lowered_args.push(lower_expr(ctx, a)?);
+                    base_args.push(lower_expr(ctx, a)?);
                 }
-                let arg_slices: Vec<(crate::types::LlvmType, &str)> =
-                    lowered_args.iter().map(|s| (DOUBLE, s.as_str())).collect();
 
                 if overrides.is_empty() {
                     // Fast path: no virtual dispatch needed.
+                    // Pad arguments based on fallback_fn's parameter count
+                    let mut padded_args = base_args.clone();
+                    if let Some((declared_count, has_rest, _)) = ctx.method_signatures.get(&fallback_fn).cloned() {
+                        if !has_rest {
+                            while padded_args.len() < declared_count {
+                                padded_args.push(double_literal(f64::from_bits(TAG_UNDEFINED)));
+                            }
+                        }
+                    }
+                    let arg_slices: Vec<(crate::types::LlvmType, &str)> =
+                        padded_args.iter().map(|s| (DOUBLE, s.as_str())).collect();
                     return Ok(ctx.block().call(DOUBLE, &fallback_fn, &arg_slices));
                 }
 
@@ -1271,6 +1280,17 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                 let mut phi_inputs: Vec<(String, String)> = Vec::new();
                 for ((_, fname), &case_idx) in overrides.iter().zip(case_idxs.iter()) {
                     ctx.current_block = case_idx;
+                    // Pad arguments based on this override method's parameter count
+                    let mut padded_args = base_args.clone();
+                    if let Some((declared_count, has_rest, _)) = ctx.method_signatures.get(fname).cloned() {
+                        if !has_rest {
+                            while padded_args.len() < declared_count {
+                                padded_args.push(double_literal(f64::from_bits(TAG_UNDEFINED)));
+                            }
+                        }
+                    }
+                    let arg_slices: Vec<(crate::types::LlvmType, &str)> =
+                        padded_args.iter().map(|s| (DOUBLE, s.as_str())).collect();
                     let v = ctx.block().call(DOUBLE, fname, &arg_slices);
                     let after_label = ctx.block().label.clone();
                     if !ctx.block().is_terminated() {
@@ -1281,6 +1301,17 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
 
                 // Default block: call the static fallback.
                 ctx.current_block = default_idx;
+                // Pad arguments based on fallback_fn's parameter count
+                let mut padded_args = base_args.clone();
+                if let Some((declared_count, has_rest, _)) = ctx.method_signatures.get(&fallback_fn).cloned() {
+                    if !has_rest {
+                        while padded_args.len() < declared_count {
+                            padded_args.push(double_literal(f64::from_bits(TAG_UNDEFINED)));
+                        }
+                    }
+                }
+                let arg_slices: Vec<(crate::types::LlvmType, &str)> =
+                    padded_args.iter().map(|s| (DOUBLE, s.as_str())).collect();
                 let v_def = ctx.block().call(DOUBLE, &fallback_fn, &arg_slices);
                 let def_label = ctx.block().label.clone();
                 if !ctx.block().is_terminated() {

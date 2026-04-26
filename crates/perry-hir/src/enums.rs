@@ -35,18 +35,18 @@ pub(crate) fn fix_imported_enums_in_stmts(stmts: &mut Vec<Stmt>, enums: &BTreeMa
             Stmt::Expr(expr) | Stmt::Return(Some(expr)) | Stmt::Throw(expr) => {
                 fix_imported_enums_in_expr(expr, enums);
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 fix_imported_enums_in_expr(condition, enums);
                 fix_imported_enums_in_stmts(then_branch, enums);
                 if let Some(else_b) = else_branch {
                     fix_imported_enums_in_stmts(else_b, enums);
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 fix_imported_enums_in_expr(condition, enums);
                 fix_imported_enums_in_stmts(body, enums);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     let mut v = vec![*init_stmt.clone()];
                     fix_imported_enums_in_stmts(&mut v, enums);
@@ -58,7 +58,7 @@ pub(crate) fn fix_imported_enums_in_stmts(stmts: &mut Vec<Stmt>, enums: &BTreeMa
                 if let Some(upd) = update { fix_imported_enums_in_expr(upd, enums); }
                 fix_imported_enums_in_stmts(body, enums);
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 fix_imported_enums_in_expr(discriminant, enums);
                 for case in cases {
                     if let Some(test) = &mut case.test {
@@ -67,7 +67,7 @@ pub(crate) fn fix_imported_enums_in_stmts(stmts: &mut Vec<Stmt>, enums: &BTreeMa
                     fix_imported_enums_in_stmts(&mut case.body, enums);
                 }
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 fix_imported_enums_in_stmts(body, enums);
                 if let Some(catch_clause) = catch {
                     fix_imported_enums_in_stmts(&mut catch_clause.body, enums);

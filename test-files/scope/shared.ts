@@ -9,4 +9,4 @@ function a() {
   return get();
 }
 
-console.log(a());
+console.log(a(), 'should be 2');

@@ -273,15 +273,15 @@ fn body_contains_super_call(stmts: &[Stmt]) -> bool {
         match stmt {
             Stmt::Let { init: Some(expr), .. } => check_expr(expr),
             Stmt::Expr(expr) | Stmt::Return(Some(expr)) | Stmt::Throw(expr) => check_expr(expr),
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 check_expr(condition)
                     || then_branch.iter().any(check_stmt)
                     || else_branch.as_ref().map_or(false, |b| b.iter().any(check_stmt))
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 check_expr(condition) || body.iter().any(check_stmt)
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 init.as_ref().map_or(false, |i| check_stmt(i))
                     || condition.as_ref().map_or(false, |c| check_expr(c))
                     || update.as_ref().map_or(false, |u| check_expr(u))
@@ -349,16 +349,16 @@ fn body_contains_closure_capturing(stmts: &[Stmt], captured_ids: &std::collectio
             Stmt::Expr(expr) | Stmt::Return(Some(expr)) | Stmt::Throw(expr) => {
                 check_expr(expr, captured_ids)
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 check_expr(condition, captured_ids) ||
                 then_branch.iter().any(|s| check_stmt(s, captured_ids)) ||
                 else_branch.as_ref().map_or(false, |b| b.iter().any(|s| check_stmt(s, captured_ids)))
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 check_expr(condition, captured_ids) ||
                 body.iter().any(|s| check_stmt(s, captured_ids))
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 init.as_ref().map_or(false, |i| check_stmt(i, captured_ids)) ||
                 condition.as_ref().map_or(false, |c| check_expr(c, captured_ids)) ||
                 update.as_ref().map_or(false, |u| check_expr(u, captured_ids)) ||
@@ -425,15 +425,15 @@ fn is_pure_function(func: &Function) -> bool {
             Stmt::Let { init: None, .. } => true,
             Stmt::Expr(e) | Stmt::Return(Some(e)) | Stmt::Throw(e) => expr_is_pure(e, known),
             Stmt::Return(None) => true,
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 expr_is_pure(condition, known)
                     && then_branch.iter().all(|s| stmt_is_pure(s, known))
                     && else_branch.as_ref().map_or(true, |b| b.iter().all(|s| stmt_is_pure(s, known)))
             }
-            Stmt::While { condition, body } | Stmt::DoWhile { condition, body } => {
+            Stmt::While { condition, body, .. } | Stmt::DoWhile { condition, body, .. } => {
                 expr_is_pure(condition, known) && body.iter().all(|s| stmt_is_pure(s, known))
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 init.as_ref().map_or(true, |i| stmt_is_pure(i, known))
                     && condition.as_ref().map_or(true, |c| expr_is_pure(c, known))
                     && update.as_ref().map_or(true, |u| expr_is_pure(u, known))
@@ -452,6 +452,11 @@ fn has_simple_control_flow(stmts: &[Stmt]) -> bool {
     for stmt in stmts {
         match stmt {
             Stmt::Let { .. } | Stmt::Expr(_) | Stmt::Return(_) => {}
+            Stmt::Block { body, .. } => {
+                if !has_simple_control_flow(body) {
+                    return false;
+                }
+            }
             Stmt::If { then_branch, else_branch, .. } => {
                 if !has_simple_control_flow(then_branch) {
                     return false;
@@ -608,7 +613,7 @@ fn find_max_local_id(stmts: &[Stmt]) -> LocalId {
                 check_expr(expr, max_id);
             }
             Stmt::Return(None) => {}
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 check_expr(condition, max_id);
                 for s in then_branch {
                     check_stmt(s, max_id);
@@ -619,13 +624,13 @@ fn find_max_local_id(stmts: &[Stmt]) -> LocalId {
                     }
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 check_expr(condition, max_id);
                 for s in body {
                     check_stmt(s, max_id);
                 }
             }
-            Stmt::DoWhile { body, condition } => {
+            Stmt::DoWhile { body, condition, .. } => {
                 for s in body {
                     check_stmt(s, max_id);
                 }
@@ -634,7 +639,7 @@ fn find_max_local_id(stmts: &[Stmt]) -> LocalId {
             Stmt::Labeled { body, .. } => {
                 check_stmt(body, max_id);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(i) = init {
                     check_stmt(i, max_id);
                 }
@@ -648,7 +653,7 @@ fn find_max_local_id(stmts: &[Stmt]) -> LocalId {
                     check_stmt(s, max_id);
                 }
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 for s in body {
                     check_stmt(s, max_id);
                 }
@@ -666,7 +671,7 @@ fn find_max_local_id(stmts: &[Stmt]) -> LocalId {
                     }
                 }
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 check_expr(discriminant, max_id);
                 for case in cases {
                     if let Some(test) = &case.test {
@@ -675,6 +680,11 @@ fn find_max_local_id(stmts: &[Stmt]) -> LocalId {
                     for s in &case.body {
                         check_stmt(s, max_id);
                     }
+                }
+            }
+            Stmt::Block { body, .. } => {
+                for s in body {
+                    check_stmt(s, max_id);
                 }
             }
             Stmt::Break | Stmt::Continue | Stmt::LabeledBreak(_) | Stmt::LabeledContinue(_) => {}
@@ -796,7 +806,7 @@ fn inline_calls_in_stmts(
                     continue;
                 }
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 let _hoisted = inline_calls_in_expr(condition, func_candidates, method_candidates, local_types, next_local_id);
                 // Note: hoisting from conditions is rare and complex; skip for now
                 inline_calls_in_stmts(then_branch, func_candidates, method_candidates, class_names, local_types, next_local_id);
@@ -804,11 +814,11 @@ fn inline_calls_in_stmts(
                     inline_calls_in_stmts(else_b, func_candidates, method_candidates, class_names, local_types, next_local_id);
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 let _hoisted = inline_calls_in_expr(condition, func_candidates, method_candidates, local_types, next_local_id);
                 inline_calls_in_stmts(body, func_candidates, method_candidates, class_names, local_types, next_local_id);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     let mut init_stmts = vec![*init_stmt.clone()];
                     inline_calls_in_stmts(&mut init_stmts, func_candidates, method_candidates, class_names, local_types, next_local_id);
@@ -947,6 +957,22 @@ fn inline_calls_in_expr(
 }
 
 /// Build a substitution map from function parameters to call arguments.
+/// Check if inlining should be skipped because of default parameters.
+/// Returns true if: function has default parameters AND fewer arguments than parameters AND it's not a rest param call
+fn should_skip_inlining_due_to_defaults(params: &[perry_hir::Param], args_len: usize) -> bool {
+    // If function has more params than args, check if any param has a default
+    if args_len < params.len() {
+        // Don't skip rest param functions - they handle missing args correctly
+        let has_rest = params.iter().any(|p| p.is_rest);
+        if has_rest {
+            return false;
+        }
+        // Skip if any param has a default - inlining would bypass the default filling logic
+        return params.iter().any(|p| p.default.is_some());
+    }
+    false
+}
+
 ///
 /// For regular parameters, maps param.id → arg.
 /// For the final rest parameter (`param.is_rest == true`), maps
@@ -966,6 +992,10 @@ fn build_param_map(
             map.insert(param.id, Expr::Array(rest_args));
         } else if let Some(arg) = args.get(i) {
             map.insert(param.id, arg.clone());
+        } else {
+            // Pad missing arguments with Undefined so default parameter
+            // filling logic in the function still works
+            map.insert(param.id, Expr::Undefined);
         }
     }
     map
@@ -986,6 +1016,11 @@ fn try_inline_simple_call(
         // Check for regular function call
         if let Expr::FuncRef(func_id) = callee.as_ref() {
             if let Some(func) = func_candidates.get(func_id) {
+                // Skip inlining if function has defaults and we have missing args
+                if should_skip_inlining_due_to_defaults(&func.params, args.len()) {
+                    return None;
+                }
+                
                 // Pattern 1: single Return(expr)
                 if func.body.len() == 1 {
                     if let Stmt::Return(Some(return_expr)) = &func.body[0] {
@@ -1000,6 +1035,11 @@ fn try_inline_simple_call(
                 // All statements except the last must be immutable Let declarations,
                 // and the last must be Return(Some(expr)).
                 if func.body.len() > 1 {
+                    // Skip inlining if function has defaults and we have missing args
+                    if should_skip_inlining_due_to_defaults(&func.params, args.len()) {
+                        return None;
+                    }
+                    
                     let last = func.body.last().unwrap();
                     if let Stmt::Return(Some(return_expr)) = last {
                         let all_lets = func.body[..func.body.len() - 1].iter().all(|s| {
@@ -1016,7 +1056,9 @@ fn try_inline_simple_call(
                                 } else if let Some(arg) = args.get(i) {
                                     arg.clone()
                                 } else {
-                                    continue;
+                                    // Pad missing arguments with Undefined so default parameter
+                                    // filling logic in the function still works
+                                    Expr::Undefined
                                 };
                                 if is_trivial_expr(&arg_expr) {
                                     param_map.insert(param.id, arg_expr);
@@ -1048,7 +1090,9 @@ fn try_inline_simple_call(
                                 } else if let Some(arg) = args.get(i) {
                                     arg.clone()
                                 } else {
-                                    continue;
+                                    // Pad missing arguments with Undefined so default parameter
+                                    // filling logic in the function still works
+                                    Expr::Undefined
                                 };
                                 if !is_trivial_expr(&arg_val) {
                                     if let Some(Expr::LocalGet(fresh_id)) = param_map.get(&param.id) {
@@ -1101,6 +1145,11 @@ fn try_inline_simple_call(
                 if let Some(class_name) = local_types.get(obj_id) {
                     // Look up the method candidate
                     if let Some(method_candidate) = method_candidates.get(&(class_name.clone(), method_name.clone())) {
+                        // Skip inlining if method has defaults and we have missing args
+                        if should_skip_inlining_due_to_defaults(&method_candidate.func.params, args.len()) {
+                            return None;
+                        }
+                        
                         // Check for single return statement
                         if method_candidate.func.body.len() == 1 {
                             if let Stmt::Return(Some(return_expr)) = &method_candidate.func.body[0] {
@@ -1113,8 +1162,15 @@ fn try_inline_simple_call(
 
                                 // Map parameters to arguments
                                 // Note: Method params don't include 'this' - they use Expr::This instead
-                                for (param, arg) in method_candidate.func.params.iter().zip(args.iter()) {
-                                    param_map.insert(param.id, arg.clone());
+                                for (i, param) in method_candidate.func.params.iter().enumerate() {
+                                    let arg = if let Some(a) = args.get(i) {
+                                        a.clone()
+                                    } else {
+                                        // Pad missing arguments with Undefined so default parameter
+                                        // filling logic in the method still works
+                                        Expr::Undefined
+                                    };
+                                    param_map.insert(param.id, arg);
                                 }
 
                                 let mut result = return_expr.clone();
@@ -1141,8 +1197,15 @@ fn try_inline_simple_call(
                                             param_map.insert(this_id, Expr::LocalGet(*obj_id));
                                         }
                                         // Note: Method params don't include 'this' - they use Expr::This instead
-                                        for (param, arg) in method_candidate.func.params.iter().zip(args.iter()) {
-                                            param_map.insert(param.id, arg.clone());
+                                        for (i, param) in method_candidate.func.params.iter().enumerate() {
+                                            let arg = if let Some(a) = args.get(i) {
+                                                a.clone()
+                                            } else {
+                                                // Pad missing arguments with Undefined so default parameter
+                                                // filling logic in the method still works
+                                                Expr::Undefined
+                                            };
+                                            param_map.insert(param.id, arg);
                                         }
                                         let mut expr = e.clone();
                                         substitute_locals(&mut expr, &param_map, next_local_id);
@@ -1180,12 +1243,24 @@ fn try_inline_call(
         // Handle regular function calls
         if let Expr::FuncRef(func_id) = callee.as_ref() {
             if let Some(func) = func_candidates.get(func_id) {
+                // Skip inlining if function has defaults and we have missing args
+                if should_skip_inlining_due_to_defaults(&func.params, args.len()) {
+                    return None;
+                }
+                
                 let mut setup_stmts: Vec<Stmt> = Vec::new();
                 let mut param_map: HashMap<LocalId, Expr> = HashMap::new();
 
-                for (param, arg) in func.params.iter().zip(args.iter()) {
-                    if is_trivial_expr(arg) {
-                        param_map.insert(param.id, arg.clone());
+                for (i, param) in func.params.iter().enumerate() {
+                    let arg = if let Some(a) = args.get(i) {
+                        a.clone()
+                    } else {
+                        // Pad missing arguments with Undefined so default parameter
+                        // filling logic in the function still works
+                        Expr::Undefined
+                    };
+                    if is_trivial_expr(&arg) {
+                        param_map.insert(param.id, arg);
                     } else {
                         let local_id = *next_local_id;
                         *next_local_id += 1;
@@ -1195,7 +1270,7 @@ fn try_inline_call(
                             name: param.name.clone(),
                             ty: param.ty.clone(),
                             mutable: false,
-                            init: Some(arg.clone()),
+                            init: Some(arg),
                         });
 
                         param_map.insert(param.id, Expr::LocalGet(local_id));
@@ -1227,6 +1302,11 @@ fn try_inline_call(
             if let Expr::LocalGet(obj_id) = object.as_ref() {
                 if let Some(class_name) = local_types.get(obj_id) {
                     if let Some(method_candidate) = method_candidates.get(&(class_name.clone(), method_name.clone())) {
+                        // Skip inlining if method has defaults and we have missing args
+                        if should_skip_inlining_due_to_defaults(&method_candidate.func.params, args.len()) {
+                            return None;
+                        }
+                        
                         let mut setup_stmts: Vec<Stmt> = Vec::new();
                         let mut param_map: HashMap<LocalId, Expr> = HashMap::new();
 
@@ -1237,9 +1317,16 @@ fn try_inline_call(
 
                         // Map parameters to arguments
                         // Note: Method params don't include 'this' - they use Expr::This instead
-                        for (param, arg) in method_candidate.func.params.iter().zip(args.iter()) {
-                            if is_trivial_expr(arg) {
-                                param_map.insert(param.id, arg.clone());
+                        for (i, param) in method_candidate.func.params.iter().enumerate() {
+                            let arg = if let Some(a) = args.get(i) {
+                                a.clone()
+                            } else {
+                                // Pad missing arguments with Undefined so default parameter
+                                // filling logic in the method still works
+                                Expr::Undefined
+                            };
+                            if is_trivial_expr(&arg) {
+                                param_map.insert(param.id, arg);
                             } else {
                                 let local_id = *next_local_id;
                                 *next_local_id += 1;
@@ -1249,7 +1336,7 @@ fn try_inline_call(
                                     name: param.name.clone(),
                                     ty: param.ty.clone(),
                                     mutable: false,
-                                    init: Some(arg.clone()),
+                                    init: Some(arg),
                                 });
 
                                 param_map.insert(param.id, Expr::LocalGet(local_id));
@@ -2015,18 +2102,18 @@ fn substitute_this_in_stmts(stmts: &mut Vec<Stmt>, obj_id: LocalId) {
             Stmt::Expr(expr) | Stmt::Return(Some(expr)) | Stmt::Throw(expr) => {
                 substitute_this(expr, obj_id);
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 substitute_this(condition, obj_id);
                 substitute_this_in_stmts(then_branch, obj_id);
                 if let Some(else_b) = else_branch {
                     substitute_this_in_stmts(else_b, obj_id);
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 substitute_this(condition, obj_id);
                 substitute_this_in_stmts(body, obj_id);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     let mut init_vec = vec![*init_stmt.clone()];
                     substitute_this_in_stmts(&mut init_vec, obj_id);
@@ -2080,7 +2167,7 @@ fn collect_body_local_ids(stmts: &[Stmt]) -> Vec<LocalId> {
                     collect_from_stmt(s, ids);
                 }
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 for s in body {
                     collect_from_stmt(s, ids);
                 }
@@ -2131,18 +2218,18 @@ fn substitute_locals_in_stmts(stmts: &mut Vec<Stmt>, param_map: &HashMap<LocalId
             Stmt::Expr(expr) | Stmt::Return(Some(expr)) | Stmt::Throw(expr) => {
                 substitute_locals(expr, param_map, next_local_id);
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 substitute_locals(condition, param_map, next_local_id);
                 substitute_locals_in_stmts(then_branch, param_map, next_local_id);
                 if let Some(else_b) = else_branch {
                     substitute_locals_in_stmts(else_b, param_map, next_local_id);
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 substitute_locals(condition, param_map, next_local_id);
                 substitute_locals_in_stmts(body, param_map, next_local_id);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     let mut init_vec = vec![*init_stmt.clone()];
                     substitute_locals_in_stmts(&mut init_vec, param_map, next_local_id);
@@ -2232,18 +2319,18 @@ fn rewrite_imul_calls_in_stmts(stmts: &mut [Stmt], imul_ids: &HashSet<FuncId>) {
             Stmt::Let { init: Some(e), .. } => {
                 rewrite_imul_calls_in_expr(e, imul_ids);
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 rewrite_imul_calls_in_expr(condition, imul_ids);
                 rewrite_imul_calls_in_stmts(then_branch, imul_ids);
                 if let Some(eb) = else_branch {
                     rewrite_imul_calls_in_stmts(eb, imul_ids);
                 }
             }
-            Stmt::While { condition, body } | Stmt::DoWhile { condition, body } => {
+            Stmt::While { condition, body, .. } | Stmt::DoWhile { condition, body, .. } => {
                 rewrite_imul_calls_in_expr(condition, imul_ids);
                 rewrite_imul_calls_in_stmts(body, imul_ids);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     rewrite_imul_calls_in_stmts(std::slice::from_mut(init_stmt), imul_ids);
                 }

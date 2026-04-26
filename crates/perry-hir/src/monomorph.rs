@@ -1421,48 +1421,61 @@ fn substitute_stmt(stmt: &Stmt, substitutions: &HashMap<String, Type>) -> Stmt {
         },
         Stmt::Expr(expr) => Stmt::Expr(substitute_expr(expr, substitutions)),
         Stmt::Return(expr) => Stmt::Return(expr.as_ref().map(|e| substitute_expr(e, substitutions))),
-        Stmt::If { condition, then_branch, else_branch } => Stmt::If {
+        Stmt::Block { scope, body } => Stmt::Block {
+            scope: *scope,
+            body: substitute_stmts(body, substitutions),
+        },
+        Stmt::If { condition, then_branch, else_branch, .. } => Stmt::If {
             condition: substitute_expr(condition, substitutions),
             then_branch: substitute_stmts(then_branch, substitutions),
             else_branch: else_branch.as_ref().map(|b| substitute_stmts(b, substitutions)),
+            then_scope: None,
+            else_scope: None,
         },
-        Stmt::While { condition, body } => Stmt::While {
+        Stmt::While { condition, body, .. } => Stmt::While {
             condition: substitute_expr(condition, substitutions),
             body: substitute_stmts(body, substitutions),
+            scope: None,
         },
-        Stmt::DoWhile { body, condition } => Stmt::DoWhile {
+        Stmt::DoWhile { body, condition, .. } => Stmt::DoWhile {
             body: substitute_stmts(body, substitutions),
             condition: substitute_expr(condition, substitutions),
+            scope: None,
         },
         Stmt::Labeled { label, body } => Stmt::Labeled {
             label: label.clone(),
             body: Box::new(substitute_stmt(body, substitutions)),
         },
-        Stmt::For { init, condition, update, body } => Stmt::For {
+        Stmt::For { init, condition, update, body, .. } => Stmt::For {
             init: init.as_ref().map(|s| Box::new(substitute_stmt(s, substitutions))),
             condition: condition.as_ref().map(|e| substitute_expr(e, substitutions)),
             update: update.as_ref().map(|e| substitute_expr(e, substitutions)),
             body: substitute_stmts(body, substitutions),
+            scope: None,
         },
         Stmt::Break => Stmt::Break,
         Stmt::Continue => Stmt::Continue,
         Stmt::LabeledBreak(label) => Stmt::LabeledBreak(label.clone()),
         Stmt::LabeledContinue(label) => Stmt::LabeledContinue(label.clone()),
         Stmt::Throw(expr) => Stmt::Throw(substitute_expr(expr, substitutions)),
-        Stmt::Try { body, catch, finally } => Stmt::Try {
+        Stmt::Try { body, catch, finally, .. } => Stmt::Try {
             body: substitute_stmts(body, substitutions),
             catch: catch.as_ref().map(|c| CatchClause {
                 param: c.param.clone(),
                 body: substitute_stmts(&c.body, substitutions),
             }),
             finally: finally.as_ref().map(|f| substitute_stmts(f, substitutions)),
+            try_scope: None,
+            catch_scope: None,
+            finally_scope: None,
         },
-        Stmt::Switch { discriminant, cases } => Stmt::Switch {
+        Stmt::Switch { discriminant, cases, .. } => Stmt::Switch {
             discriminant: substitute_expr(discriminant, substitutions),
             cases: cases.iter().map(|c| SwitchCase {
                 test: c.test.as_ref().map(|t| substitute_expr(t, substitutions)),
                 body: substitute_stmts(&c.body, substitutions),
             }).collect(),
+            scope: None,
         },
     }
 }
@@ -1732,6 +1745,9 @@ fn collect_instantiations_in_stmts(stmts: &[Stmt], ctx: &mut MonomorphizationCon
 
 fn collect_instantiations_in_stmt(stmt: &Stmt, ctx: &mut MonomorphizationContext, module: &Module, idx: &ModuleIndex) {
     match stmt {
+        Stmt::Block { scope: _, body } => {
+            collect_instantiations_in_stmts(body, ctx, module, idx);
+        }
         Stmt::Let { init, .. } => {
             if let Some(expr) = init {
                 collect_instantiations_in_expr(expr, ctx, module, idx);
@@ -1743,25 +1759,25 @@ fn collect_instantiations_in_stmt(stmt: &Stmt, ctx: &mut MonomorphizationContext
                 collect_instantiations_in_expr(e, ctx, module, idx);
             }
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_instantiations_in_expr(condition, ctx, module, idx);
             collect_instantiations_in_stmts(then_branch, ctx, module, idx);
             if let Some(else_b) = else_branch {
                 collect_instantiations_in_stmts(else_b, ctx, module, idx);
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             collect_instantiations_in_expr(condition, ctx, module, idx);
             collect_instantiations_in_stmts(body, ctx, module, idx);
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             collect_instantiations_in_stmts(body, ctx, module, idx);
             collect_instantiations_in_expr(condition, ctx, module, idx);
         }
         Stmt::Labeled { body, .. } => {
             collect_instantiations_in_stmt(body, ctx, module, idx);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 collect_instantiations_in_stmt(init_stmt, ctx, module, idx);
             }
@@ -1774,7 +1790,7 @@ fn collect_instantiations_in_stmt(stmt: &Stmt, ctx: &mut MonomorphizationContext
             collect_instantiations_in_stmts(body, ctx, module, idx);
         }
         Stmt::Throw(expr) => collect_instantiations_in_expr(expr, ctx, module, idx),
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             collect_instantiations_in_stmts(body, ctx, module, idx);
             if let Some(c) = catch {
                 collect_instantiations_in_stmts(&c.body, ctx, module, idx);
@@ -1783,7 +1799,7 @@ fn collect_instantiations_in_stmt(stmt: &Stmt, ctx: &mut MonomorphizationContext
                 collect_instantiations_in_stmts(f, ctx, module, idx);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_instantiations_in_expr(discriminant, ctx, module, idx);
             for case in cases {
                 if let Some(ref test) = case.test {
@@ -2142,6 +2158,9 @@ fn update_call_sites_in_stmts(stmts: &mut [Stmt], ctx: &MonomorphizationContext,
 
 fn update_call_sites_in_stmt(stmt: &mut Stmt, ctx: &MonomorphizationContext, lookup: &InferenceLookup) {
     match stmt {
+        Stmt::Block { scope: _, body } => {
+            update_call_sites_in_stmts(body, ctx, lookup);
+        }
         Stmt::Let { init, .. } => {
             if let Some(expr) = init {
                 update_call_sites_in_expr(expr, ctx, lookup);
@@ -2153,25 +2172,25 @@ fn update_call_sites_in_stmt(stmt: &mut Stmt, ctx: &MonomorphizationContext, loo
                 update_call_sites_in_expr(e, ctx, lookup);
             }
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             update_call_sites_in_expr(condition, ctx, lookup);
             update_call_sites_in_stmts(then_branch, ctx, lookup);
             if let Some(else_b) = else_branch {
                 update_call_sites_in_stmts(else_b, ctx, lookup);
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             update_call_sites_in_expr(condition, ctx, lookup);
             update_call_sites_in_stmts(body, ctx, lookup);
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             update_call_sites_in_stmts(body, ctx, lookup);
             update_call_sites_in_expr(condition, ctx, lookup);
         }
         Stmt::Labeled { body, .. } => {
             update_call_sites_in_stmt(body, ctx, lookup);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 update_call_sites_in_stmt(init_stmt, ctx, lookup);
             }
@@ -2184,7 +2203,7 @@ fn update_call_sites_in_stmt(stmt: &mut Stmt, ctx: &MonomorphizationContext, loo
             update_call_sites_in_stmts(body, ctx, lookup);
         }
         Stmt::Throw(expr) => update_call_sites_in_expr(expr, ctx, lookup),
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             update_call_sites_in_stmts(body, ctx, lookup);
             if let Some(c) = catch {
                 update_call_sites_in_stmts(&mut c.body, ctx, lookup);
@@ -2193,7 +2212,7 @@ fn update_call_sites_in_stmt(stmt: &mut Stmt, ctx: &MonomorphizationContext, loo
                 update_call_sites_in_stmts(f, ctx, lookup);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             update_call_sites_in_expr(discriminant, ctx, lookup);
             for case in cases {
                 if let Some(ref mut test) = case.test {
@@ -2683,6 +2702,9 @@ fn fill_defaults_in_stmts(stmts: &mut [Stmt], ctor_defaults: &HashMap<String, Ve
 
 fn fill_defaults_in_stmt(stmt: &mut Stmt, ctor_defaults: &HashMap<String, Vec<Option<Expr>>>) {
     match stmt {
+        Stmt::Block { scope: _, body } => {
+            fill_defaults_in_stmts(body, ctor_defaults);
+        }
         Stmt::Let { init, .. } => {
             if let Some(expr) = init {
                 fill_defaults_in_expr(expr, ctor_defaults);
@@ -2694,25 +2716,25 @@ fn fill_defaults_in_stmt(stmt: &mut Stmt, ctor_defaults: &HashMap<String, Vec<Op
                 fill_defaults_in_expr(e, ctor_defaults);
             }
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             fill_defaults_in_expr(condition, ctor_defaults);
             fill_defaults_in_stmts(then_branch, ctor_defaults);
             if let Some(else_b) = else_branch {
                 fill_defaults_in_stmts(else_b, ctor_defaults);
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             fill_defaults_in_expr(condition, ctor_defaults);
             fill_defaults_in_stmts(body, ctor_defaults);
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             fill_defaults_in_stmts(body, ctor_defaults);
             fill_defaults_in_expr(condition, ctor_defaults);
         }
         Stmt::Labeled { body, .. } => {
             fill_defaults_in_stmt(body, ctor_defaults);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 fill_defaults_in_stmt(init_stmt, ctor_defaults);
             }
@@ -2725,7 +2747,7 @@ fn fill_defaults_in_stmt(stmt: &mut Stmt, ctor_defaults: &HashMap<String, Vec<Op
             fill_defaults_in_stmts(body, ctor_defaults);
         }
         Stmt::Throw(expr) => fill_defaults_in_expr(expr, ctor_defaults),
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             fill_defaults_in_stmts(body, ctor_defaults);
             if let Some(ref mut c) = catch {
                 fill_defaults_in_stmts(&mut c.body, ctor_defaults);
@@ -2734,7 +2756,7 @@ fn fill_defaults_in_stmt(stmt: &mut Stmt, ctor_defaults: &HashMap<String, Vec<Op
                 fill_defaults_in_stmts(f, ctor_defaults);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             fill_defaults_in_expr(discriminant, ctor_defaults);
             for case in cases {
                 fill_defaults_in_stmts(&mut case.body, ctor_defaults);

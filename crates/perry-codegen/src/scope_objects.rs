@@ -16,7 +16,7 @@ use perry_types::LocalId;
 /// Allocate scope objects for root scope only at function entry.
 ///
 /// For Phase 3, this allocates scope objects only for the root scope (function scope).
-/// Nested scopes (if blocks, loop blocks, etc.) are allocated lazily when entering those blocks.
+/// Nested scopes are allocated eagerly when entering their corresponding blocks.
 /// The runtime function js_scope_object_alloc takes the number of variables and returns
 /// an i64 pointer to the heap-allocated scope object.
 ///
@@ -93,17 +93,9 @@ pub fn initialize_scope_objects(ctx: &mut FnCtx<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Lazily allocate a scope if it hasn't been allocated yet.
-///
-/// This is called when accessing a variable in a scope to ensure the scope
-/// object is created even if it wasn't allocated at function entry (e.g., for
-/// scopes inside conditional blocks).
-pub fn ensure_scope_allocated(ctx: &mut FnCtx<'_>, scope_id: ScopeId) -> Result<()> {
-    // If the scope is already allocated, do nothing
-    if ctx.scope_ptrs.contains_key(&scope_id) {
-        return Ok(());
-    }
-
+/// Allocate a scope when entering a block. Call this at the entry of each block
+/// (if branch, loop body, try/catch/finally, etc.) that has captured variables.
+pub fn allocate_scope_at_entry(ctx: &mut FnCtx<'_>, scope_id: ScopeId) -> Result<()> {
     // Find the scope in the capture analysis
     if let Some(analysis) = &ctx.scope_capture_analysis {
         if let Some(scope_ctx) = analysis.scopes.get(&scope_id) {

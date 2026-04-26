@@ -241,6 +241,10 @@ pub(crate) struct FnCtx<'a> {
     /// has_rest_param)`. Used by FuncRef call sites to know whether
     /// to bundle trailing arguments into a rest array.
     pub func_signatures: &'a std::collections::HashMap<u32, (usize, bool, bool)>,
+    /// Per-method LLVM name → (declared_param_count, has_rest_param, returns_number).
+    /// Built once in `compile_module` from all class methods. Used by class instance
+    /// method call sites to know parameter counts for default-parameter filling.
+    pub method_signatures: &'a std::collections::HashMap<String, (usize, bool, bool)>,
     /// LocalIds that must be stored in heap boxes (`js_box_alloc`)
     /// instead of stack allocas. A local gets boxed when at least
     /// one closure captures it AND it's written to (either by the
@@ -551,6 +555,7 @@ pub(crate) struct FnCtx<'a> {
     /// are created with scope pointers instead of individual captures.
     pub scope_capture_analysis: Option<Box<CaptureAnalysis>>,
 
+    /// Stack of ScopeIds during lowering. Tracks which scopes we're currently nested in.
     /// When lowering a closure body with scope objects, this maps each
     /// scope to its index in the closure's capture array. Used during
     /// LocalGet/LocalSet to route through scope objects.
@@ -700,9 +705,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         }
                     } else {
                         // Not in a closure body: get from the scope pointer directly
-                        // Ensure scope is allocated (lazy allocation for nested scopes)
-                        crate::scope_objects::ensure_scope_allocated(ctx, scope_id)?;
-
+                        // Scope is already allocated when entering the block
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let blk = ctx.block();
                             // Read the variable from the scope object
@@ -858,9 +861,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         }
                     } else {
                         // Not in a closure body: write to the scope pointer directly
-                        // Ensure scope is allocated (lazy allocation for nested scopes)
-                        crate::scope_objects::ensure_scope_allocated(ctx, scope_id)?;
-
+                        // Scope is already allocated when entering the block
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let blk = ctx.block();
                             // Write the variable to the scope object

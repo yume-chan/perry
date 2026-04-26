@@ -240,18 +240,18 @@ fn collect_keys_from_stmt(
         Stmt::Let { init: Some(expr), .. } | Stmt::Expr(expr) | Stmt::Return(Some(expr)) | Stmt::Throw(expr) => {
             collect_keys_from_expr(expr, key_to_idx, keys);
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_keys_from_expr(condition, key_to_idx, keys);
             collect_keys_from_stmts(then_branch, key_to_idx, keys);
             if let Some(else_b) = else_branch {
                 collect_keys_from_stmts(else_b, key_to_idx, keys);
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             collect_keys_from_expr(condition, key_to_idx, keys);
             collect_keys_from_stmts(body, key_to_idx, keys);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 collect_keys_from_stmt(init_stmt, key_to_idx, keys);
             }
@@ -263,7 +263,7 @@ fn collect_keys_from_stmt(
             }
             collect_keys_from_stmts(body, key_to_idx, keys);
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             collect_keys_from_stmts(body, key_to_idx, keys);
             if let Some(catch_clause) = catch {
                 collect_keys_from_stmts(&catch_clause.body, key_to_idx, keys);
@@ -272,7 +272,7 @@ fn collect_keys_from_stmt(
                 collect_keys_from_stmts(finally_body, key_to_idx, keys);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_keys_from_expr(discriminant, key_to_idx, keys);
             for case in cases {
                 if let Some(test) = &case.test {
@@ -448,18 +448,18 @@ fn replace_in_stmt(
         Stmt::Let { init: Some(expr), .. } | Stmt::Expr(expr) | Stmt::Return(Some(expr)) | Stmt::Throw(expr) => {
             replace_in_expr(expr, key_to_idx, plural_info, plural_param_map);
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             replace_in_expr(condition, key_to_idx, plural_info, plural_param_map);
             replace_in_stmts(then_branch, key_to_idx, plural_info, plural_param_map);
             if let Some(else_b) = else_branch {
                 replace_in_stmts(else_b, key_to_idx, plural_info, plural_param_map);
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             replace_in_expr(condition, key_to_idx, plural_info, plural_param_map);
             replace_in_stmts(body, key_to_idx, plural_info, plural_param_map);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 replace_in_stmt(init_stmt, key_to_idx, plural_info, plural_param_map);
             }
@@ -471,7 +471,7 @@ fn replace_in_stmt(
             }
             replace_in_stmts(body, key_to_idx, plural_info, plural_param_map);
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             replace_in_stmts(body, key_to_idx, plural_info, plural_param_map);
             if let Some(catch_clause) = catch {
                 replace_in_stmts(&mut catch_clause.body, key_to_idx, plural_info, plural_param_map);
@@ -480,7 +480,7 @@ fn replace_in_stmt(
                 replace_in_stmts(finally_body, key_to_idx, plural_info, plural_param_map);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             replace_in_expr(discriminant, key_to_idx, plural_info, plural_param_map);
             for case in cases {
                 if let Some(test) = &mut case.test {

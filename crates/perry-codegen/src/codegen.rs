@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Context, Result};
-use perry_hir::{Expr, Function, Module as HirModule, Stmt};
+use perry_hir::{Expr, Function, Module as HirModule, Stmt, ScopeId};
 
 use crate::expr::FnCtx;
 use crate::module::LlModule;
@@ -1109,6 +1109,25 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         }
     }
 
+    // Build method signatures: LLVM function name → (param_count, has_rest, returns_number).
+    // Used by instance method call sites to know parameter counts for default-parameter filling.
+    let mut method_signatures: HashMap<String, (usize, bool, bool)> = HashMap::new();
+    for c in &hir.classes {
+        for m in &c.methods {
+            let method_llvm_name = format!(
+                "perry_method_{}__{}__{}",
+                module_prefix,
+                sanitize(&c.name),
+                sanitize(&m.name),
+            );
+            let has_rest = m.params.iter().any(|p| p.is_rest);
+            let returns_number = matches!(m.return_type, perry_types::Type::Number | perry_types::Type::Int32);
+            // Instance methods have implicit `this` parameter + user params
+            let declared_count = m.params.len() + 1;
+            method_signatures.insert(method_llvm_name, (declared_count, has_rest, returns_number));
+        }
+    }
+
     // Module-level boxed_vars: union of every per-function/method/
     // closure/module-init boxed set. We compute this once here because
     // closures emitted in `compile_closure` need to know whether their
@@ -1292,6 +1311,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             &static_field_globals,
             &class_ids,
             &func_signatures,
+            &method_signatures,
             &module_prefix,
             &module_boxed_vars,
             &closure_rest_params,
@@ -1316,6 +1336,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             &static_field_globals,
             &class_ids,
             &func_signatures,
+            &method_signatures,
             &module_prefix,
             &module_boxed_vars,
             &module_local_types,
@@ -1346,6 +1367,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 &static_field_globals,
                 &class_ids,
                 &func_signatures,
+                &method_signatures,
                 &module_prefix,
                 &module_boxed_vars,
                 &closure_rest_params,
@@ -1374,6 +1396,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 &static_field_globals,
                 &class_ids,
                 &func_signatures,
+                &method_signatures,
                 &module_prefix,
                 &module_boxed_vars,
                 &closure_rest_params,
@@ -1399,6 +1422,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 &static_field_globals,
                 &class_ids,
                 &func_signatures,
+                &method_signatures,
                 &module_prefix,
                 &module_boxed_vars,
                 &closure_rest_params,
@@ -1432,7 +1456,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 &mut llmod, class, &ctor_as_method, &func_names, &mut strings,
                 &class_table, &method_names, &module_globals, &module_global_types,
                 &opts.import_function_prefixes, &enum_table,
-                &static_field_globals, &class_ids, &func_signatures, &module_prefix,
+                &static_field_globals, &class_ids, &func_signatures, &method_signatures, &module_prefix,
                 &module_boxed_vars, &closure_rest_params, &cross_module,
             ).with_context(|| format!("lowering constructor for '{}'", class.name))?;
         }
@@ -1454,6 +1478,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 &static_field_globals,
                 &class_ids,
                 &func_signatures,
+                &method_signatures,
                 &module_prefix,
                 &module_boxed_vars,
                 &closure_rest_params,
@@ -1601,6 +1626,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         &static_field_globals,
         &class_ids,
         &func_signatures,
+        &method_signatures,
         &module_prefix,
         opts.is_entry_module,
         &opts.non_entry_module_prefixes,
@@ -1662,6 +1688,7 @@ fn compile_function(
     static_field_globals: &HashMap<(String, String), String>,
     class_ids: &HashMap<String, u32>,
     func_signatures: &HashMap<u32, (usize, bool, bool)>,
+    method_signatures: &HashMap<String, (usize, bool, bool)>,
     module_prefix: &str,
     module_boxed_vars: &std::collections::HashSet<u32>,
     closure_rest_params: &HashMap<u32, usize>,
@@ -1768,6 +1795,7 @@ fn compile_function(
         class_keys_globals: &cross_module.class_keys_globals,
             imported_class_ctors: &cross_module.imported_class_ctors,
         func_signatures,
+        method_signatures: &method_signatures,
         boxed_vars,
         closure_rest_params,
         local_closure_func_ids: HashMap::new(),
@@ -1817,6 +1845,43 @@ fn compile_function(
         // scope_capture_analysis is populated
     }
     scope_objects::initialize_scope_objects(&mut ctx)?;
+
+    // Phase 4: Fill in parameter defaults
+    // For each parameter with a default value, check if the argument is undefined
+    // and if so, use the default value instead.
+    for param in &f.params {
+        if let Some(default_expr) = &param.default {
+            let slot = ctx.locals.get(&param.id)
+                .ok_or_else(|| anyhow!("Parameter {} not found in locals", param.id))?
+                .clone();
+            
+            // Check if the parameter value is TAG_UNDEFINED
+            let blk = ctx.block();
+            let param_val = blk.load(DOUBLE, &slot);
+            let tag_undefined_i64 = crate::nanbox::TAG_UNDEFINED.to_string();
+            
+            // Bitcast double to i64 for comparison
+            let param_as_i64 = blk.bitcast_double_to_i64(&param_val);
+            let is_undefined = blk.icmp_eq(I64, &param_as_i64, &tag_undefined_i64);
+            
+            // Create then/merge blocks
+            let then_idx = ctx.new_block("param_default_then");
+            let merge_idx = ctx.new_block("param_default_merge");
+            let then_label = ctx.block_label(then_idx);
+            let merge_label = ctx.block_label(merge_idx);
+            
+            ctx.block().cond_br(&is_undefined, &then_label, &merge_label);
+            
+            // In then_block: lower the default expression and store
+            ctx.current_block = then_idx;
+            let default_val = crate::expr::lower_expr(&mut ctx, default_expr)?;
+            ctx.block().store(DOUBLE, &default_val, &slot);
+            ctx.block().br(&merge_label);
+            
+            // Continue in merge block
+            ctx.current_block = merge_idx;
+        }
+    }
 
     stmt::lower_stmts(&mut ctx, &f.body)
         .with_context(|| format!("lowering body of '{}'", f.name))?;
@@ -1884,6 +1949,7 @@ fn compile_closure(
     static_field_globals: &HashMap<(String, String), String>,
     class_ids: &HashMap<String, u32>,
     func_signatures: &HashMap<u32, (usize, bool, bool)>,
+    method_signatures: &HashMap<String, (usize, bool, bool)>,
     module_prefix: &str,
     module_boxed_vars: &std::collections::HashSet<u32>,
     module_local_types: &HashMap<u32, perry_types::Type>,
@@ -2067,6 +2133,7 @@ fn compile_closure(
         class_keys_globals: &cross_module.class_keys_globals,
             imported_class_ctors: &cross_module.imported_class_ctors,
         func_signatures,
+        method_signatures: &method_signatures,
         boxed_vars: closure_boxed_vars,
         closure_rest_params,
         local_closure_func_ids: HashMap::new(),
@@ -2105,7 +2172,7 @@ fn compile_closure(
         buffer_data_slots: HashMap::new(),
         buffer_alias_base,
         scope_ptrs: HashMap::new(),
-        scope_capture_analysis: enclosing_scope_capture_analysis,
+        scope_capture_analysis: enclosing_scope_capture_analysis.clone(),
         closure_auto_captures_cache: HashMap::new(),
         closure_scope_indices: HashMap::new(),
     };
@@ -2132,6 +2199,43 @@ fn compile_closure(
             ctx.closure_scope_indices.insert(*scope_id, idx);
         }
     } else {
+    }
+
+    // Phase 4: Fill in parameter defaults
+    // For each parameter with a default value, check if the argument is undefined
+    // and if so, use the default value instead.
+    for param in params.iter() {
+        if let Some(default_expr) = &param.default {
+            let slot = ctx.locals.get(&param.id)
+                .ok_or_else(|| anyhow!("Parameter {} not found in locals", param.id))?
+                .clone();
+            
+            // Check if the parameter value is TAG_UNDEFINED
+            let blk = ctx.block();
+            let param_val = blk.load(DOUBLE, &slot);
+            let tag_undefined_i64 = crate::nanbox::TAG_UNDEFINED.to_string();
+            
+            // Bitcast double to i64 for comparison
+            let param_as_i64 = blk.bitcast_double_to_i64(&param_val);
+            let is_undefined = blk.icmp_eq(I64, &param_as_i64, &tag_undefined_i64);
+            
+            // Create then/merge blocks
+            let then_idx = ctx.new_block("param_default_then");
+            let merge_idx = ctx.new_block("param_default_merge");
+            let then_label = ctx.block_label(then_idx);
+            let merge_label = ctx.block_label(merge_idx);
+            
+            ctx.block().cond_br(&is_undefined, &then_label, &merge_label);
+            
+            // In then_block: lower the default expression and store
+            ctx.current_block = then_idx;
+            let default_val = crate::expr::lower_expr(&mut ctx, default_expr)?;
+            ctx.block().store(DOUBLE, &default_val, &slot);
+            ctx.block().br(&merge_label);
+            
+            // Continue in merge block
+            ctx.current_block = merge_idx;
+        }
     }
 
     stmt::lower_stmts(&mut ctx, body)
@@ -2180,6 +2284,7 @@ fn compile_method(
     static_field_globals: &HashMap<(String, String), String>,
     class_ids: &HashMap<String, u32>,
     func_signatures: &HashMap<u32, (usize, bool, bool)>,
+    method_signatures: &HashMap<String, (usize, bool, bool)>,
     module_prefix: &str,
     module_boxed_vars: &std::collections::HashSet<u32>,
     closure_rest_params: &HashMap<u32, usize>,
@@ -2273,6 +2378,7 @@ fn compile_method(
         class_keys_globals: &cross_module.class_keys_globals,
             imported_class_ctors: &cross_module.imported_class_ctors,
         func_signatures,
+        method_signatures: &method_signatures,
         boxed_vars: method_boxed_vars,
         closure_rest_params,
         local_closure_func_ids: HashMap::new(),
@@ -2318,6 +2424,43 @@ fn compile_method(
 
     // Phase 3: Initialize scope objects if present
     scope_objects::initialize_scope_objects(&mut ctx)?;
+
+    // Phase 4: Fill in parameter defaults
+    // For each parameter with a default value, check if the argument is undefined
+    // and if so, use the default value instead.
+    for param in &method.params {
+        if let Some(default_expr) = &param.default {
+            let slot = ctx.locals.get(&param.id)
+                .ok_or_else(|| anyhow!("Parameter {} not found in locals", param.id))?
+                .clone();
+            
+            // Check if the parameter value is TAG_UNDEFINED
+            let blk = ctx.block();
+            let param_val = blk.load(DOUBLE, &slot);
+            let tag_undefined_i64 = crate::nanbox::TAG_UNDEFINED.to_string();
+            
+            // Bitcast double to i64 for comparison
+            let param_as_i64 = blk.bitcast_double_to_i64(&param_val);
+            let is_undefined = blk.icmp_eq(I64, &param_as_i64, &tag_undefined_i64);
+            
+            // Create then/merge blocks
+            let then_idx = ctx.new_block("param_default_then");
+            let merge_idx = ctx.new_block("param_default_merge");
+            let then_label = ctx.block_label(then_idx);
+            let merge_label = ctx.block_label(merge_idx);
+            
+            ctx.block().cond_br(&is_undefined, &then_label, &merge_label);
+            
+            // In then_block: lower the default expression and store
+            ctx.current_block = then_idx;
+            let default_val = crate::expr::lower_expr(&mut ctx, default_expr)?;
+            ctx.block().store(DOUBLE, &default_val, &slot);
+            ctx.block().br(&merge_label);
+            
+            // Continue in merge block
+            ctx.current_block = merge_idx;
+        }
+    }
 
     // Constructors emitted as standalone cross-module LLVM functions (named
     // `<prefix>__<class>_constructor`) must bake the field initializers into
@@ -2386,6 +2529,7 @@ fn compile_module_entry(
     static_field_globals: &HashMap<(String, String), String>,
     class_ids: &HashMap<String, u32>,
     func_signatures: &HashMap<u32, (usize, bool, bool)>,
+    method_signatures: &HashMap<String, (usize, bool, bool)>,
     module_prefix: &str,
     is_entry: bool,
     non_entry_module_prefixes: &[String],
@@ -2493,6 +2637,7 @@ fn compile_module_entry(
             class_keys_globals: &cross_module.class_keys_globals,
             imported_class_ctors: &cross_module.imported_class_ctors,
             func_signatures,
+            method_signatures: &method_signatures,
             boxed_vars: main_boxed_vars,
             closure_rest_params: &closure_rest_params,
             local_closure_func_ids: HashMap::new(),
@@ -2714,6 +2859,7 @@ fn compile_module_entry(
             class_keys_globals: &cross_module.class_keys_globals,
             imported_class_ctors: &cross_module.imported_class_ctors,
             func_signatures,
+            method_signatures: &method_signatures,
             boxed_vars: init_boxed_vars,
             closure_rest_params: &closure_rest_params,
             local_closure_func_ids: HashMap::new(),
@@ -2997,6 +3143,7 @@ fn compile_static_method(
     static_field_globals: &HashMap<(String, String), String>,
     class_ids: &HashMap<String, u32>,
     func_signatures: &HashMap<u32, (usize, bool, bool)>,
+    method_signatures: &HashMap<String, (usize, bool, bool)>,
     module_prefix: &str,
     module_boxed_vars: &std::collections::HashSet<u32>,
     closure_rest_params: &HashMap<u32, usize>,
@@ -3114,6 +3261,7 @@ fn compile_static_method(
         class_keys_globals: &cross_module.class_keys_globals,
             imported_class_ctors: &cross_module.imported_class_ctors,
         func_signatures,
+        method_signatures: &method_signatures,
         boxed_vars: static_boxed_vars,
         closure_rest_params,
         local_closure_func_ids: HashMap::new(),

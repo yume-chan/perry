@@ -45,9 +45,27 @@ pub fn analyze_captures(func_body: &[Stmt], func_locals: &[LocalId]) -> CaptureA
     analyzer.finish()
 }
 
+/// Assign scope IDs from capture analysis to HIR statements
+/// This fills in the scope fields on If/While/For/Try/Switch/Block statements
+/// Must be called AFTER analyze_captures on the same body (or a clone of it)
+pub fn assign_scopes_to_stmts(func_body: &mut [Stmt], analysis: &CaptureAnalysis) {
+    let mut assigner = ScopeAssigner::new(analysis);
+    let root_scope = ScopeId(0);  // Root scope is always 0
+    assigner.current_scope = Some(root_scope);
+    
+    for stmt in func_body {
+        assigner.walk_stmt_mut(stmt);
+    }
+}
+
 /// Helper: collect all locally-defined variables in a statement (at current scope level only, not nested scopes)
 fn collect_defined_in_scope_stmt(stmt: &Stmt, defined: &mut std::collections::HashSet<LocalId>) {
     match stmt {
+        Stmt::Block { scope: _, body } => { 
+            for s in body { 
+                collect_defined_in_scope_stmt(s, defined); 
+            } 
+        },
         Stmt::Let { id, .. } => {
             defined.insert(*id);
         }
@@ -58,7 +76,7 @@ fn collect_defined_in_scope_stmt(stmt: &Stmt, defined: &mut std::collections::Ha
         Stmt::While { body: _, .. } | Stmt::DoWhile { body: _, .. } | Stmt::For { body: _, .. } => {
             // Don't recurse into loop bodies - they have their own scopes
         }
-        Stmt::Try { body: _, catch: _, finally: _ } => {
+        Stmt::Try { body: _, catch: _, finally: _, .. } => {
             // Don't recurse into try/catch/finally - they have their own scopes
         }
         _ => {}
@@ -128,6 +146,7 @@ impl CaptureAnalyzer {
 
     fn walk_stmt(&mut self, stmt: &Stmt) {
         match stmt {
+            Stmt::Block { scope: _, body } => { for s in body { self.walk_stmt(s); } },
             Stmt::Let { id, init, .. } => {
                 if let Some(current) = self.current_scope() {
                     if let Some(scope) = self.scopes.get_mut(&current) {
@@ -144,7 +163,7 @@ impl CaptureAnalyzer {
                     self.walk_expr(expr);
                 }
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 self.walk_expr(condition);
                 let parent = self.current_scope();
                 let then_scope = self.create_scope(parent);
@@ -162,7 +181,7 @@ impl CaptureAnalyzer {
                     self.exit_scope();
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 self.walk_expr(condition);
                 let parent = self.current_scope();
                 let loop_scope = self.create_scope(parent);
@@ -172,7 +191,7 @@ impl CaptureAnalyzer {
                 }
                 self.exit_scope();
             }
-            Stmt::DoWhile { body, condition } => {
+            Stmt::DoWhile { body, condition, .. } => {
                 let parent = self.current_scope();
                 let loop_scope = self.create_scope(parent);
                 self.enter_scope(loop_scope);
@@ -182,7 +201,7 @@ impl CaptureAnalyzer {
                 self.exit_scope();
                 self.walk_expr(condition);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 let parent = self.current_scope();
                 let for_scope = self.create_scope(parent);
                 self.enter_scope(for_scope);
@@ -201,7 +220,7 @@ impl CaptureAnalyzer {
                 self.exit_scope();
             }
             Stmt::Throw(expr) => self.walk_expr(expr),
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 let parent = self.current_scope();
                 let try_scope = self.create_scope(parent);
                 self.enter_scope(try_scope);
@@ -226,7 +245,7 @@ impl CaptureAnalyzer {
                     self.exit_scope();
                 }
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 self.walk_expr(discriminant);
                 let parent = self.current_scope();
                 let switch_scope = self.create_scope(parent);
@@ -789,5 +808,189 @@ impl CaptureAnalyzer {
         analysis.scopes = self.scopes;
         analysis.closures = self.closures;
         analysis
+    }
+}
+
+/// Helper struct to assign ScopeIds to HIR statements after capture analysis
+struct ScopeAssigner<'a> {
+    analysis: &'a CaptureAnalysis,
+    current_scope: Option<ScopeId>,
+    scope_stack: Vec<ScopeId>,
+}
+
+impl<'a> ScopeAssigner<'a> {
+    fn new(analysis: &'a CaptureAnalysis) -> Self {
+        ScopeAssigner {
+            analysis,
+            current_scope: None,
+            scope_stack: Vec::new(),
+        }
+    }
+
+    fn push_scope(&mut self, scope_id: ScopeId) {
+        self.scope_stack.push(self.current_scope.unwrap_or(ScopeId(0)));
+        self.current_scope = Some(scope_id);
+    }
+
+    fn pop_scope(&mut self) {
+        self.current_scope = self.scope_stack.pop();
+    }
+    
+    /// Get child scopes of a parent scope, sorted by ScopeId
+    fn get_child_scopes(&self, parent_scope: Option<ScopeId>) -> Vec<ScopeId> {
+        let mut scopes: Vec<_> = self.analysis.scopes.iter()
+            .filter(|(_, ctx)| ctx.parent_scope == parent_scope)
+            .map(|(id, _)| *id)
+            .collect();
+        scopes.sort_by_key(|id| id.0);
+        scopes
+    }
+
+    fn walk_stmt_mut(&mut self, stmt: &mut Stmt) {
+        match stmt {
+            Stmt::Block { scope, body } => {
+                // Find the scope for this block in the analysis
+                // For now, we don't have block-specific scope tracking,
+                // so blocks use the current scope
+                if let Some(current) = self.current_scope {
+                    if self.analysis.scopes.contains_key(&current) {
+                        *scope = Some(current);
+                        self.push_scope(current);
+                        for s in body {
+                            self.walk_stmt_mut(s);
+                        }
+                        self.pop_scope();
+                        return;
+                    }
+                }
+                for s in body {
+                    self.walk_stmt_mut(s);
+                }
+            }
+            Stmt::If { condition: _, then_branch, else_branch, then_scope, else_scope } => {
+                let parent_scope = self.current_scope;
+                let child_scopes = self.get_child_scopes(parent_scope);
+                
+                let mut scope_iter = child_scopes.into_iter();
+                
+                // Assign then_scope
+                if let Some(then_scope_id) = scope_iter.next() {
+                    *then_scope = Some(then_scope_id);
+                    self.push_scope(then_scope_id);
+                    for s in then_branch {
+                        self.walk_stmt_mut(s);
+                    }
+                    self.pop_scope();
+                }
+                
+                // Assign else_scope if present
+                if let Some(else_stmts) = else_branch {
+                    if let Some(else_scope_id) = scope_iter.next() {
+                        *else_scope = Some(else_scope_id);
+                        self.push_scope(else_scope_id);
+                        for s in else_stmts {
+                            self.walk_stmt_mut(s);
+                        }
+                        self.pop_scope();
+                    }
+                }
+            }
+            Stmt::While { condition: _, body, scope } => {
+                let parent_scope = self.current_scope;
+                let child_scopes = self.get_child_scopes(parent_scope);
+                
+                if let Some(loop_scope_id) = child_scopes.first() {
+                    *scope = Some(*loop_scope_id);
+                    self.push_scope(*loop_scope_id);
+                    for s in body {
+                        self.walk_stmt_mut(s);
+                    }
+                    self.pop_scope();
+                }
+            }
+            Stmt::DoWhile { body, condition: _, scope } => {
+                let parent_scope = self.current_scope;
+                let child_scopes = self.get_child_scopes(parent_scope);
+                
+                if let Some(loop_scope_id) = child_scopes.first() {
+                    *scope = Some(*loop_scope_id);
+                    self.push_scope(*loop_scope_id);
+                    for s in body {
+                        self.walk_stmt_mut(s);
+                    }
+                    self.pop_scope();
+                }
+            }
+            Stmt::For { init: _, condition: _, update: _, body, scope } => {
+                let parent_scope = self.current_scope;
+                let child_scopes = self.get_child_scopes(parent_scope);
+                
+                if let Some(loop_scope_id) = child_scopes.first() {
+                    *scope = Some(*loop_scope_id);
+                    self.push_scope(*loop_scope_id);
+                    for s in body {
+                        self.walk_stmt_mut(s);
+                    }
+                    self.pop_scope();
+                }
+            }
+            Stmt::Try { try_scope, catch_scope, finally_scope, .. } => {
+                let parent_scope = self.current_scope;
+                
+                // Collect scopes that belong to this Try statement
+                let child_scopes = self.get_child_scopes(parent_scope);
+                let mut scope_iter = child_scopes.into_iter();
+                
+                // Now assign scopes to Try, Catch, and Finally
+                // We need to re-match to get mutable access
+                if let Stmt::Try { body, catch, finally, try_scope: ts, catch_scope: cs, finally_scope: fs } = stmt {
+                    if let Some(try_scope_id) = scope_iter.next() {
+                        *ts = Some(try_scope_id);
+                        self.push_scope(try_scope_id);
+                        for s in body {
+                            self.walk_stmt_mut(s);
+                        }
+                        self.pop_scope();
+                    }
+                    if let Some(catch_clause) = catch {
+                        if let Some(catch_scope_id) = scope_iter.next() {
+                            *cs = Some(catch_scope_id);
+                            self.push_scope(catch_scope_id);
+                            for s in &mut catch_clause.body {
+                                self.walk_stmt_mut(s);
+                            }
+                            self.pop_scope();
+                        }
+                    }
+                    if let Some(finally_body) = finally {
+                        if let Some(finally_scope_id) = scope_iter.next() {
+                            *fs = Some(finally_scope_id);
+                            self.push_scope(finally_scope_id);
+                            for s in finally_body {
+                                self.walk_stmt_mut(s);
+                            }
+                            self.pop_scope();
+                        }
+                    }
+                }
+            }
+
+            Stmt::Switch { discriminant: _, cases, scope } => {
+                let parent_scope = self.current_scope;
+                let child_scopes = self.get_child_scopes(parent_scope);
+                
+                if let Some(switch_scope_id) = child_scopes.first() {
+                    *scope = Some(*switch_scope_id);
+                    self.push_scope(*switch_scope_id);
+                    for case in cases {
+                        for s in &mut case.body {
+                            self.walk_stmt_mut(s);
+                        }
+                    }
+                    self.pop_scope();
+                }
+            }
+            _ => {}
+        }
     }
 }

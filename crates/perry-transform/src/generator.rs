@@ -58,31 +58,31 @@ fn scan_stmt_for_max_local(stmt: &Stmt, max_id: &mut LocalId) {
         Stmt::Return(e) => {
             if let Some(e) = e { scan_expr_for_max_local(e, max_id); }
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             scan_expr_for_max_local(condition, max_id);
             scan_stmts_for_max_local(then_branch, max_id);
             if let Some(eb) = else_branch { scan_stmts_for_max_local(eb, max_id); }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             scan_expr_for_max_local(condition, max_id);
             scan_stmts_for_max_local(body, max_id);
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             scan_stmts_for_max_local(body, max_id);
             scan_expr_for_max_local(condition, max_id);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(i) = init { scan_stmt_for_max_local(i, max_id); }
             if let Some(c) = condition { scan_expr_for_max_local(c, max_id); }
             if let Some(u) = update { scan_expr_for_max_local(u, max_id); }
             scan_stmts_for_max_local(body, max_id);
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             scan_stmts_for_max_local(body, max_id);
             if let Some(c) = catch { scan_stmts_for_max_local(&c.body, max_id); }
             if let Some(f) = finally { scan_stmts_for_max_local(f, max_id); }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             scan_expr_for_max_local(discriminant, max_id);
             for case in cases { scan_stmts_for_max_local(&case.body, max_id); }
         }
@@ -221,14 +221,14 @@ fn scan_stmt_for_max_func(stmt: &Stmt, max_id: &mut FuncId) {
             scan_expr_for_max_func(expr, max_id);
         }
         Stmt::Let { init: Some(expr), .. } => scan_expr_for_max_func(expr, max_id),
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             scan_expr_for_max_func(condition, max_id);
             scan_stmts_for_max_func(then_branch, max_id);
             if let Some(eb) = else_branch { scan_stmts_for_max_func(eb, max_id); }
         }
         Stmt::While { body, .. } => scan_stmts_for_max_func(body, max_id),
         Stmt::For { body, .. } => scan_stmts_for_max_func(body, max_id),
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             scan_stmts_for_max_func(body, max_id);
             if let Some(c) = catch { scan_stmts_for_max_func(&c.body, max_id); }
             if let Some(f) = finally { scan_stmts_for_max_func(f, max_id); }
@@ -397,7 +397,7 @@ fn wrap_returns_in_promise(stmts: &mut Vec<Stmt>) {
                 wrap_returns_in_promise(&mut v);
                 *body = Box::new(v.into_iter().next().unwrap());
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 wrap_returns_in_promise(body);
                 if let Some(c) = catch {
                     wrap_returns_in_promise(&mut c.body);
@@ -538,6 +538,8 @@ fn transform_generator_function(func: &mut Function, next_local_id: &mut u32, ne
             },
             then_branch: case_body,
             else_branch: None,
+            then_scope: None,
+            else_scope: None,
         });
     }
 
@@ -565,11 +567,14 @@ fn transform_generator_function(func: &mut Function, next_local_id: &mut u32, ne
                 Stmt::Return(Some(make_iter_result(Expr::Undefined, true))),
             ],
             else_branch: None,
+            then_scope: None,
+            else_scope: None,
         },
         // while (true) { if-chain }
         Stmt::While {
             condition: Expr::Bool(true),
             body: while_body,
+            scope: None,
         },
     ];
     if is_async_generator {
@@ -832,6 +837,7 @@ fn linearize_body(
                         }),
                     },
                     body: while_body,
+                    scope: None,
                 };
 
                 // Now linearize the expanded while (it contains a yield, so the while handler picks it up)
@@ -866,7 +872,7 @@ fn linearize_body(
             }
 
             // For-loop containing yield(s)
-            Stmt::For { init, condition, update, body }
+            Stmt::For { init, condition, update, body, .. }
                 if body_contains_yield(body) =>
             {
                 // State N: pre-loop code + init, goto condition check
@@ -914,6 +920,8 @@ fn linearize_body(
                             Stmt::Continue,
                         ],
                         else_branch: None,
+                        then_scope: None,
+                        else_scope: None,
                     }]
                 } else {
                     vec![]
@@ -952,7 +960,7 @@ fn linearize_body(
             }
 
             // While-loop containing yield(s) - similar to for-loop
-            Stmt::While { condition, body: while_body }
+            Stmt::While { condition, body: while_body, .. }
                 if body_contains_yield(while_body) =>
             {
                 // Pre-loop code gets its own state (if non-empty)
@@ -988,6 +996,8 @@ fn linearize_body(
                             Stmt::Continue,
                         ],
                         else_branch: None,
+                        then_scope: None,
+                        else_scope: None,
                     }],
                     exit: StateExit::Goto(body_state),
                 });
@@ -1018,7 +1028,7 @@ fn linearize_body(
             // Limitations: no per-state exception handler tracking, so only the
             // first catch encountered will run on .throw(). Catches themselves
             // must not yield — they run to completion inside the throw closure.
-            Stmt::Try { body, catch, finally }
+            Stmt::Try { body, catch, finally, .. }
                 if body_contains_yield(body) =>
             {
                 // Linearize the try body directly (yields become normal states)
@@ -1040,7 +1050,7 @@ fn linearize_body(
             }
 
             // If-statement containing yield(s) — linearize both branches
-            Stmt::If { condition, then_branch, else_branch }
+            Stmt::If { condition, then_branch, else_branch, .. }
                 if body_contains_yield(then_branch)
                 || else_branch.as_ref().map_or(false, |e| body_contains_yield(e)) =>
             {
@@ -1068,6 +1078,8 @@ fn linearize_body(
                                 Stmt::Expr(Expr::LocalSet(state_id, Box::new(Expr::Number(else_state_placeholder as f64)))),
                                 Stmt::Continue,
                             ]),
+                            then_scope: None,
+                            else_scope: None,
                         });
                         b
                     },
@@ -1190,7 +1202,7 @@ fn body_contains_yield(stmts: &[Stmt]) -> bool {
             Stmt::For { body, .. } => {
                 if body_contains_yield(body) { return true; }
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 if body_contains_yield(body) { return true; }
                 if let Some(c) = catch {
                     if body_contains_yield(&c.body) { return true; }
@@ -1236,7 +1248,7 @@ fn collect_vars_recursive(stmts: &[Stmt], vars: &mut Vec<(LocalId, String, Type)
                 }
                 collect_vars_recursive(body, vars);
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 collect_vars_recursive(body, vars);
                 if let Some(c) = catch {
                     // Hoist the catch parameter so the .throw() closure can assign to it.

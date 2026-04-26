@@ -731,6 +731,7 @@ pub fn collect_local_refs_expr(expr: &Expr, refs: &mut Vec<LocalId>, visited: &m
 /// Collect all LocalGet references from a statement
 pub fn collect_local_refs_stmt(stmt: &Stmt, refs: &mut Vec<LocalId>, visited: &mut std::collections::HashSet<usize>) {
     match stmt {
+            Stmt::Block { scope: _, body } => { /* will be handled below */ }
         Stmt::Let { init, .. } => {
             if let Some(init_expr) = init {
                 collect_local_refs_expr(init_expr, refs, visited);
@@ -744,7 +745,7 @@ pub fn collect_local_refs_stmt(stmt: &Stmt, refs: &mut Vec<LocalId>, visited: &m
                 collect_local_refs_expr(e, refs, visited);
             }
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_local_refs_expr(condition, refs, visited);
             for s in then_branch {
                 collect_local_refs_stmt(s, refs, visited);
@@ -755,13 +756,13 @@ pub fn collect_local_refs_stmt(stmt: &Stmt, refs: &mut Vec<LocalId>, visited: &m
                 }
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             collect_local_refs_expr(condition, refs, visited);
             for s in body {
                 collect_local_refs_stmt(s, refs, visited);
             }
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             for s in body {
                 collect_local_refs_stmt(s, refs, visited);
             }
@@ -770,7 +771,7 @@ pub fn collect_local_refs_stmt(stmt: &Stmt, refs: &mut Vec<LocalId>, visited: &m
         Stmt::Labeled { body, .. } => {
             collect_local_refs_stmt(body, refs, visited);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 collect_local_refs_stmt(init_stmt, refs, visited);
             }
@@ -785,7 +786,7 @@ pub fn collect_local_refs_stmt(stmt: &Stmt, refs: &mut Vec<LocalId>, visited: &m
             }
         }
         Stmt::Break | Stmt::Continue | Stmt::LabeledBreak(_) | Stmt::LabeledContinue(_) => {}
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             for s in body {
                 collect_local_refs_stmt(s, refs, visited);
             }
@@ -800,7 +801,7 @@ pub fn collect_local_refs_stmt(stmt: &Stmt, refs: &mut Vec<LocalId>, visited: &m
                 }
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_local_refs_expr(discriminant, refs, visited);
             for case in cases {
                 if let Some(ref test) = case.test {
@@ -820,6 +821,7 @@ pub fn collect_local_refs_stmt(stmt: &Stmt, refs: &mut Vec<LocalId>, visited: &m
 /// Collect all local IDs that are assigned to in a statement
 pub(crate) fn collect_assigned_locals_stmt(stmt: &Stmt, assigned: &mut Vec<LocalId>) {
     match stmt {
+            Stmt::Block { scope: _, body } => { /* will be handled below */ }
         Stmt::Let { .. } => {
             // Let declaration doesn't count as assignment to outer variable
         }
@@ -831,7 +833,7 @@ pub(crate) fn collect_assigned_locals_stmt(stmt: &Stmt, assigned: &mut Vec<Local
                 collect_assigned_locals_expr(e, assigned);
             }
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_assigned_locals_expr(condition, assigned);
             for s in then_branch {
                 collect_assigned_locals_stmt(s, assigned);
@@ -842,13 +844,13 @@ pub(crate) fn collect_assigned_locals_stmt(stmt: &Stmt, assigned: &mut Vec<Local
                 }
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             collect_assigned_locals_expr(condition, assigned);
             for s in body {
                 collect_assigned_locals_stmt(s, assigned);
             }
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             for s in body {
                 collect_assigned_locals_stmt(s, assigned);
             }
@@ -857,7 +859,7 @@ pub(crate) fn collect_assigned_locals_stmt(stmt: &Stmt, assigned: &mut Vec<Local
         Stmt::Labeled { body, .. } => {
             collect_assigned_locals_stmt(body, assigned);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 collect_assigned_locals_stmt(init_stmt, assigned);
             }
@@ -872,7 +874,7 @@ pub(crate) fn collect_assigned_locals_stmt(stmt: &Stmt, assigned: &mut Vec<Local
             }
         }
         Stmt::Break | Stmt::Continue | Stmt::LabeledBreak(_) | Stmt::LabeledContinue(_) => {}
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             for s in body {
                 collect_assigned_locals_stmt(s, assigned);
             }
@@ -887,7 +889,7 @@ pub(crate) fn collect_assigned_locals_stmt(stmt: &Stmt, assigned: &mut Vec<Local
                 }
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_assigned_locals_expr(discriminant, assigned);
             for case in cases {
                 if let Some(ref test) = case.test {
@@ -1636,30 +1638,31 @@ pub(crate) fn uses_this_expr(expr: &Expr) -> bool {
 /// Check if a statement or its children use `this`
 pub(crate) fn uses_this_stmt(stmt: &Stmt) -> bool {
     match stmt {
+        Stmt::Block { scope: _, body } => body.iter().any(uses_this_stmt),
         Stmt::Let { init: Some(expr), .. } => uses_this_expr(expr),
         Stmt::Expr(expr) => uses_this_expr(expr),
         Stmt::Return(Some(expr)) => uses_this_expr(expr),
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             uses_this_expr(condition) ||
             then_branch.iter().any(uses_this_stmt) ||
             else_branch.as_ref().map(|b| b.iter().any(uses_this_stmt)).unwrap_or(false)
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             uses_this_expr(condition) || body.iter().any(uses_this_stmt)
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             init.as_ref().map(|s| uses_this_stmt(s)).unwrap_or(false) ||
             condition.as_ref().map(|e| uses_this_expr(e)).unwrap_or(false) ||
             update.as_ref().map(|e| uses_this_expr(e)).unwrap_or(false) ||
             body.iter().any(uses_this_stmt)
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             body.iter().any(uses_this_stmt) ||
             catch.as_ref().map(|c| c.body.iter().any(uses_this_stmt)).unwrap_or(false) ||
             finally.as_ref().map(|f| f.iter().any(uses_this_stmt)).unwrap_or(false)
         }
         Stmt::Throw(expr) => uses_this_expr(expr),
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             uses_this_expr(discriminant) ||
             cases.iter().any(|c| {
                 c.test.as_ref().map(uses_this_expr).unwrap_or(false) ||
@@ -1695,32 +1698,33 @@ pub fn replace_this_in_stmts(stmts: &mut Vec<Stmt>, this_id: LocalId) {
 
 fn replace_this_in_stmt(stmt: &mut Stmt, this_id: LocalId) {
     match stmt {
+            Stmt::Block { scope: _, body } => { /* will be handled below */ }
         Stmt::Let { init, .. } => {
             if let Some(e) = init { replace_this_in_expr(e, this_id); }
         }
         Stmt::Expr(e) => replace_this_in_expr(e, this_id),
         Stmt::Return(Some(e)) => replace_this_in_expr(e, this_id),
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             replace_this_in_expr(condition, this_id);
             replace_this_in_stmts(then_branch, this_id);
             if let Some(eb) = else_branch { replace_this_in_stmts(eb, this_id); }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             replace_this_in_expr(condition, this_id);
             replace_this_in_stmts(body, this_id);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(i) = init { replace_this_in_stmt(i, this_id); }
             if let Some(c) = condition { replace_this_in_expr(c, this_id); }
             if let Some(u) = update { replace_this_in_expr(u, this_id); }
             replace_this_in_stmts(body, this_id);
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             replace_this_in_stmts(body, this_id);
             if let Some(c) = catch { replace_this_in_stmts(&mut c.body, this_id); }
             if let Some(f) = finally { replace_this_in_stmts(f, this_id); }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             replace_this_in_expr(discriminant, this_id);
             for c in cases {
                 if let Some(t) = &mut c.test { replace_this_in_expr(t, this_id); }
@@ -1844,6 +1848,7 @@ fn replace_this_in_expr(expr: &mut Expr, this_id: LocalId) {
 /// Does NOT recurse into nested closures - those have their own scope.
 pub fn collect_defined_locals_stmt(stmt: &Stmt, defined: &mut Vec<LocalId>) {
     match stmt {
+            Stmt::Block { scope: _, body } => { /* will be handled below */ }
         Stmt::Let { id, init, .. } => {
             defined.push(*id);
             if let Some(expr) = init {
@@ -1856,7 +1861,7 @@ pub fn collect_defined_locals_stmt(stmt: &Stmt, defined: &mut Vec<LocalId>) {
                 collect_defined_locals_expr(expr, defined);
             }
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             collect_defined_locals_expr(condition, defined);
             for s in then_branch {
                 collect_defined_locals_stmt(s, defined);
@@ -1867,19 +1872,19 @@ pub fn collect_defined_locals_stmt(stmt: &Stmt, defined: &mut Vec<LocalId>) {
                 }
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             collect_defined_locals_expr(condition, defined);
             for s in body {
                 collect_defined_locals_stmt(s, defined);
             }
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             for s in body {
                 collect_defined_locals_stmt(s, defined);
             }
             collect_defined_locals_expr(condition, defined);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 collect_defined_locals_stmt(init_stmt, defined);
             }
@@ -1894,7 +1899,7 @@ pub fn collect_defined_locals_stmt(stmt: &Stmt, defined: &mut Vec<LocalId>) {
             }
         }
         Stmt::Throw(expr) => collect_defined_locals_expr(expr, defined),
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             for s in body {
                 collect_defined_locals_stmt(s, defined);
             }
@@ -1912,7 +1917,7 @@ pub fn collect_defined_locals_stmt(stmt: &Stmt, defined: &mut Vec<LocalId>) {
                 }
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             collect_defined_locals_expr(discriminant, defined);
             for case in cases {
                 for s in &case.body {

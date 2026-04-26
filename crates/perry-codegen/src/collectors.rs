@@ -38,7 +38,7 @@ pub(crate) fn has_any_mutation(stmts: &[perry_hir::Stmt], id: u32) -> bool {
                     return true;
                 }
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 if expr_has_mutation(condition, id) {
                     return true;
                 }
@@ -51,7 +51,7 @@ pub(crate) fn has_any_mutation(stmts: &[perry_hir::Stmt], id: u32) -> bool {
                     }
                 }
             }
-            Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+            Stmt::While { condition, body, .. }| Stmt::DoWhile { body, condition, .. } => {
                 if expr_has_mutation(condition, id) {
                     return true;
                 }
@@ -59,7 +59,7 @@ pub(crate) fn has_any_mutation(stmts: &[perry_hir::Stmt], id: u32) -> bool {
                     return true;
                 }
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     if has_any_mutation(std::slice::from_ref(init_stmt), id) {
                         return true;
@@ -79,7 +79,7 @@ pub(crate) fn has_any_mutation(stmts: &[perry_hir::Stmt], id: u32) -> bool {
                     return true;
                 }
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 if has_any_mutation(body, id) {
                     return true;
                 }
@@ -94,7 +94,7 @@ pub(crate) fn has_any_mutation(stmts: &[perry_hir::Stmt], id: u32) -> bool {
                     }
                 }
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 if expr_has_mutation(discriminant, id) {
                     return true;
                 }
@@ -247,22 +247,22 @@ pub(crate) fn collect_closures_in_stmts(
                     collect_closures_in_expr(e, seen, out);
                 }
             }
-            perry_hir::Stmt::If { condition, then_branch, else_branch } => {
+            perry_hir::Stmt::If { condition, then_branch, else_branch, .. } => {
                 collect_closures_in_expr(condition, seen, out);
                 collect_closures_in_stmts(then_branch, seen, out);
                 if let Some(eb) = else_branch {
                     collect_closures_in_stmts(eb, seen, out);
                 }
             }
-            perry_hir::Stmt::While { condition, body } => {
+            perry_hir::Stmt::While { condition, body, .. }=> {
                 collect_closures_in_expr(condition, seen, out);
                 collect_closures_in_stmts(body, seen, out);
             }
-            perry_hir::Stmt::DoWhile { body, condition } => {
+            perry_hir::Stmt::DoWhile { body, condition, .. } => {
                 collect_closures_in_stmts(body, seen, out);
                 collect_closures_in_expr(condition, seen, out);
             }
-            perry_hir::Stmt::For { init, condition, update, body } => {
+            perry_hir::Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     collect_closures_in_stmts(std::slice::from_ref(init_stmt), seen, out);
                 }
@@ -274,7 +274,7 @@ pub(crate) fn collect_closures_in_stmts(
                 }
                 collect_closures_in_stmts(body, seen, out);
             }
-            perry_hir::Stmt::Switch { discriminant, cases } => {
+            perry_hir::Stmt::Switch { discriminant, cases, .. } => {
                 collect_closures_in_expr(discriminant, seen, out);
                 for case in cases {
                     if let Some(test) = &case.test {
@@ -283,7 +283,7 @@ pub(crate) fn collect_closures_in_stmts(
                     collect_closures_in_stmts(&case.body, seen, out);
                 }
             }
-            perry_hir::Stmt::Try { body, catch, finally } => {
+            perry_hir::Stmt::Try { body, catch, finally, .. } => {
                 collect_closures_in_stmts(body, seen, out);
                 if let Some(c) = catch {
                     collect_closures_in_stmts(&c.body, seen, out);
@@ -835,22 +835,22 @@ pub(crate) fn collect_ref_ids_in_stmts(stmts: &[perry_hir::Stmt], out: &mut Hash
                     collect_ref_ids_in_expr(e, out);
                 }
             }
-            perry_hir::Stmt::If { condition, then_branch, else_branch } => {
+            perry_hir::Stmt::If { condition, then_branch, else_branch, .. } => {
                 collect_ref_ids_in_expr(condition, out);
                 collect_ref_ids_in_stmts(then_branch, out);
                 if let Some(eb) = else_branch {
                     collect_ref_ids_in_stmts(eb, out);
                 }
             }
-            perry_hir::Stmt::While { condition, body } => {
+            perry_hir::Stmt::While { condition, body, .. }=> {
                 collect_ref_ids_in_expr(condition, out);
                 collect_ref_ids_in_stmts(body, out);
             }
-            perry_hir::Stmt::DoWhile { body, condition } => {
+            perry_hir::Stmt::DoWhile { body, condition, .. } => {
                 collect_ref_ids_in_stmts(body, out);
                 collect_ref_ids_in_expr(condition, out);
             }
-            perry_hir::Stmt::For { init, condition, update, body } => {
+            perry_hir::Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     collect_ref_ids_in_stmts(std::slice::from_ref(init_stmt), out);
                 }
@@ -1563,7 +1563,7 @@ fn collect_integer_let_ids(
             Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
                 collect_integer_let_ids(body, out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 collect_integer_let_ids(body, out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
                 if let Some(c) = catch {
                     collect_integer_let_ids(&c.body, out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
@@ -1636,22 +1636,22 @@ fn collect_localset_ids_in_stmts_filtered(
                     collect_localset_ids_in_expr_filtered(e, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
                 }
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 collect_localset_ids_in_expr_filtered(condition, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
                 collect_localset_ids_in_stmts_filtered(then_branch, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
                 if let Some(eb) = else_branch {
                     collect_localset_ids_in_stmts_filtered(eb, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. }=> {
                 collect_localset_ids_in_expr_filtered(condition, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
                 collect_localset_ids_in_stmts_filtered(body, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
             }
-            Stmt::DoWhile { body, condition } => {
+            Stmt::DoWhile { body, condition, .. } => {
                 collect_localset_ids_in_stmts_filtered(body, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
                 collect_localset_ids_in_expr_filtered(condition, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     collect_localset_ids_in_stmts_filtered(
                         std::slice::from_ref(init_stmt),
@@ -1670,7 +1670,7 @@ fn collect_localset_ids_in_stmts_filtered(
                 }
                 collect_localset_ids_in_stmts_filtered(body, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 collect_localset_ids_in_stmts_filtered(body, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
                 if let Some(c) = catch {
                     collect_localset_ids_in_stmts_filtered(&c.body, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
@@ -1679,7 +1679,7 @@ fn collect_localset_ids_in_stmts_filtered(
                     collect_localset_ids_in_stmts_filtered(f, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
                 }
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 collect_localset_ids_in_expr_filtered(discriminant, out, filter, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
                 for c in cases {
                     if let Some(t) = &c.test {
@@ -2076,14 +2076,14 @@ pub fn detect_clamp3(f: &Function) -> Option<(u32, u32, u32)> {
     if f.body.len() != 3 { return None; }
     let (v_id, lo_id, hi_id) = (f.params[0].id, f.params[1].id, f.params[2].id);
     // [0] If { cond: Compare(Lt, v, lo), then: [Return(lo)] }
-    if let Stmt::If { condition: Expr::Compare { op: perry_hir::CompareOp::Lt, left, right }, then_branch, else_branch: None } = &f.body[0] {
+    if let Stmt::If { condition: Expr::Compare { op: perry_hir::CompareOp::Lt, left, right }, then_branch, else_branch: None, .. } = &f.body[0] {
         if !matches!(left.as_ref(), Expr::LocalGet(id) if *id == v_id) { return None; }
         if !matches!(right.as_ref(), Expr::LocalGet(id) if *id == lo_id) { return None; }
         if then_branch.len() != 1 { return None; }
         if !matches!(&then_branch[0], Stmt::Return(Some(Expr::LocalGet(id))) if *id == lo_id) { return None; }
     } else { return None; }
     // [1] If { cond: Compare(Gt, v, hi), then: [Return(hi)] }
-    if let Stmt::If { condition: Expr::Compare { op: perry_hir::CompareOp::Gt, left, right }, then_branch, else_branch: None } = &f.body[1] {
+    if let Stmt::If { condition: Expr::Compare { op: perry_hir::CompareOp::Gt, left, right }, then_branch, else_branch: None, .. } = &f.body[1] {
         if !matches!(left.as_ref(), Expr::LocalGet(id) if *id == v_id) { return None; }
         if !matches!(right.as_ref(), Expr::LocalGet(id) if *id == hi_id) { return None; }
         if then_branch.len() != 1 { return None; }
@@ -2099,12 +2099,12 @@ pub fn detect_clamp_u8(f: &Function) -> bool {
     if f.is_async || f.is_generator || f.params.len() != 1 { return false; }
     if f.body.len() != 3 { return false; }
     let v_id = f.params[0].id;
-    if let Stmt::If { condition: Expr::Compare { op: perry_hir::CompareOp::Lt, left, right }, then_branch, else_branch: None } = &f.body[0] {
+    if let Stmt::If { condition: Expr::Compare { op: perry_hir::CompareOp::Lt, left, right }, then_branch, else_branch: None, .. } = &f.body[0] {
         if !matches!(left.as_ref(), Expr::LocalGet(id) if *id == v_id) { return false; }
         if !matches!(right.as_ref(), Expr::Integer(0)) { return false; }
         if !matches!(then_branch.as_slice(), [Stmt::Return(Some(Expr::Integer(0)))]) { return false; }
     } else { return false; }
-    if let Stmt::If { condition: Expr::Compare { op: perry_hir::CompareOp::Gt, left, right }, then_branch, else_branch: None } = &f.body[1] {
+    if let Stmt::If { condition: Expr::Compare { op: perry_hir::CompareOp::Gt, left, right }, then_branch, else_branch: None, .. } = &f.body[1] {
         if !matches!(left.as_ref(), Expr::LocalGet(id) if *id == v_id) { return false; }
         if !matches!(right.as_ref(), Expr::Integer(255)) { return false; }
         if !matches!(then_branch.as_slice(), [Stmt::Return(Some(Expr::Integer(255)))]) { return false; }
@@ -2160,7 +2160,7 @@ fn i64s_stmts(ss: &[Stmt], sid: u32) -> bool {
     ss.iter().all(|s| match s {
         Stmt::Return(Some(e)) => i64s_expr(e, sid),
         Stmt::Return(None) => true,
-        Stmt::If { condition, then_branch, else_branch } =>
+        Stmt::If { condition, then_branch, else_branch, .. } =>
             i64s_expr(condition, sid) && i64s_stmts(then_branch, sid)
             && else_branch.as_ref().map_or(true, |eb| i64s_stmts(eb, sid)),
         Stmt::Expr(e) | Stmt::Let { init: Some(e), .. } => i64s_expr(e, sid),
@@ -2233,7 +2233,7 @@ fn i64_body(cx: &mut I64Cx<'_>, ss: &[Stmt]) {
                 cx.locals.insert(*id, slot);
             }
             Stmt::Expr(e) => { let _ = i64_val(cx, e); }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 let cond = i64_cond(cx, condition);
                 let _ = cx.f.create_block("i64.then");
                 let ti = cx.f.num_blocks() - 1;
@@ -2413,7 +2413,7 @@ fn find_new_candidates(
             Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
                 find_new_candidates(body, boxed_vars, module_globals, candidates);
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 find_new_candidates(body, boxed_vars, module_globals, candidates);
                 if let Some(c) = catch {
                     find_new_candidates(&c.body, boxed_vars, module_globals, candidates);
@@ -2461,22 +2461,22 @@ fn check_escapes_in_stmts(
                     check_escapes_in_expr(e, candidates, classes, escaped);
                 }
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 check_escapes_in_expr(condition, candidates, classes, escaped);
                 check_escapes_in_stmts(then_branch, candidates, classes, escaped);
                 if let Some(eb) = else_branch {
                     check_escapes_in_stmts(eb, candidates, classes, escaped);
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. }=> {
                 check_escapes_in_expr(condition, candidates, classes, escaped);
                 check_escapes_in_stmts(body, candidates, classes, escaped);
             }
-            Stmt::DoWhile { body, condition } => {
+            Stmt::DoWhile { body, condition, .. } => {
                 check_escapes_in_stmts(body, candidates, classes, escaped);
                 check_escapes_in_expr(condition, candidates, classes, escaped);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     check_escapes_in_stmts(
                         std::slice::from_ref(init_stmt),
@@ -2493,7 +2493,7 @@ fn check_escapes_in_stmts(
                 }
                 check_escapes_in_stmts(body, candidates, classes, escaped);
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 check_escapes_in_expr(discriminant, candidates, classes, escaped);
                 for case in cases {
                     if let Some(test) = &case.test {
@@ -2502,7 +2502,7 @@ fn check_escapes_in_stmts(
                     check_escapes_in_stmts(&case.body, candidates, classes, escaped);
                 }
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 check_escapes_in_stmts(body, candidates, classes, escaped);
                 if let Some(c) = catch {
                     check_escapes_in_stmts(&c.body, candidates, classes, escaped);
@@ -3215,7 +3215,7 @@ fn find_array_candidates(
             Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
                 find_array_candidates(body, boxed_vars, module_globals, candidates);
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 find_array_candidates(body, boxed_vars, module_globals, candidates);
                 if let Some(c) = catch {
                     find_array_candidates(&c.body, boxed_vars, module_globals, candidates);
@@ -3261,22 +3261,22 @@ fn check_array_escapes_in_stmts(
                     check_array_escapes_in_expr(e, candidates, escaped);
                 }
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 check_array_escapes_in_expr(condition, candidates, escaped);
                 check_array_escapes_in_stmts(then_branch, candidates, escaped);
                 if let Some(eb) = else_branch {
                     check_array_escapes_in_stmts(eb, candidates, escaped);
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. }=> {
                 check_array_escapes_in_expr(condition, candidates, escaped);
                 check_array_escapes_in_stmts(body, candidates, escaped);
             }
-            Stmt::DoWhile { body, condition } => {
+            Stmt::DoWhile { body, condition, .. } => {
                 check_array_escapes_in_stmts(body, candidates, escaped);
                 check_array_escapes_in_expr(condition, candidates, escaped);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     check_array_escapes_in_stmts(
                         std::slice::from_ref(init_stmt),
@@ -3292,7 +3292,7 @@ fn check_array_escapes_in_stmts(
                 }
                 check_array_escapes_in_stmts(body, candidates, escaped);
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 check_array_escapes_in_expr(discriminant, candidates, escaped);
                 for case in cases {
                     if let Some(test) = &case.test {
@@ -3301,7 +3301,7 @@ fn check_array_escapes_in_stmts(
                     check_array_escapes_in_stmts(&case.body, candidates, escaped);
                 }
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 check_array_escapes_in_stmts(body, candidates, escaped);
                 if let Some(c) = catch {
                     check_array_escapes_in_stmts(&c.body, candidates, escaped);
@@ -3619,7 +3619,7 @@ fn find_object_literal_candidates(
             Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
                 find_object_literal_candidates(body, boxed_vars, module_globals, candidates);
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 find_object_literal_candidates(body, boxed_vars, module_globals, candidates);
                 if let Some(c) = catch {
                     find_object_literal_candidates(&c.body, boxed_vars, module_globals, candidates);
@@ -3667,22 +3667,22 @@ fn check_object_literal_escapes_in_stmts(
                     check_object_literal_escapes_in_expr(e, candidates, escaped);
                 }
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 check_object_literal_escapes_in_expr(condition, candidates, escaped);
                 check_object_literal_escapes_in_stmts(then_branch, candidates, escaped);
                 if let Some(eb) = else_branch {
                     check_object_literal_escapes_in_stmts(eb, candidates, escaped);
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. }=> {
                 check_object_literal_escapes_in_expr(condition, candidates, escaped);
                 check_object_literal_escapes_in_stmts(body, candidates, escaped);
             }
-            Stmt::DoWhile { body, condition } => {
+            Stmt::DoWhile { body, condition, .. } => {
                 check_object_literal_escapes_in_stmts(body, candidates, escaped);
                 check_object_literal_escapes_in_expr(condition, candidates, escaped);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 if let Some(init_stmt) = init {
                     check_object_literal_escapes_in_stmts(
                         std::slice::from_ref(init_stmt),
@@ -3698,7 +3698,7 @@ fn check_object_literal_escapes_in_stmts(
                 }
                 check_object_literal_escapes_in_stmts(body, candidates, escaped);
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 check_object_literal_escapes_in_expr(discriminant, candidates, escaped);
                 for case in cases {
                     if let Some(test) = &case.test {
@@ -3707,7 +3707,7 @@ fn check_object_literal_escapes_in_stmts(
                     check_object_literal_escapes_in_stmts(&case.body, candidates, escaped);
                 }
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 check_object_literal_escapes_in_stmts(body, candidates, escaped);
                 if let Some(c) = catch {
                     check_object_literal_escapes_in_stmts(&c.body, candidates, escaped);

@@ -5,7 +5,7 @@
 //! top level. Loops and Date.now land in Phase 2.1.
 
 use anyhow::{anyhow, bail, Result};
-use perry_hir::Stmt;
+use perry_hir::{Stmt, ScopeId};
 
 use crate::expr::{lower_expr, FnCtx};
 use crate::loop_purity::body_is_observably_side_effect_free;
@@ -474,9 +474,7 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
                 // Write to scope object if this local is captured (new scope object system)
                 if let Some(analysis) = &ctx.scope_capture_analysis {
                     if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
-                        // Ensure the scope is allocated (lazy allocation for nested scopes)
-                        crate::scope_objects::ensure_scope_allocated(ctx, scope_id)?;
-
+                        // Scope is already allocated when entering the block
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let blk = ctx.block();
                             let var_index_str = var_index.to_string();
@@ -528,9 +526,7 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
                 // No initializer: initialize scope object variable to undefined
                 if let Some(analysis) = &ctx.scope_capture_analysis {
                     if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
-                        // Ensure the scope is allocated (lazy allocation for nested scopes)
-                        crate::scope_objects::ensure_scope_allocated(ctx, scope_id)?;
-
+                        // Scope is already allocated when entering the block
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let undef = crate::nanbox::double_literal(f64::from_bits(
                                 crate::nanbox::TAG_UNDEFINED,
@@ -548,24 +544,15 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
             Ok(())
         }
 
-        Stmt::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => lower_if(ctx, condition, then_branch, else_branch.as_deref()),
+        Stmt::If { condition, then_branch, else_branch, then_scope, else_scope, } => lower_if(ctx, condition, then_branch, else_branch.as_deref(), *then_scope, *else_scope),
 
-        Stmt::For {
-            init,
-            condition,
-            update,
-            body,
-        } => lower_for(ctx, init.as_deref(), condition.as_ref(), update.as_ref(), body),
+        Stmt::For { init, condition, update, body, scope, } => lower_for(ctx, init.as_deref(), condition.as_ref(), update.as_ref(), body, *scope),
 
         // `while (cond) { body }` — same CFG as for-loop without init/update.
-        Stmt::While { condition, body } => lower_while(ctx, condition, body),
+        Stmt::While { condition, body, scope, } => lower_while(ctx, condition, body, *scope),
 
         // `do { body } while (cond)` — body runs at least once, then cond.
-        Stmt::DoWhile { body, condition } => lower_do_while(ctx, body, condition),
+        Stmt::DoWhile { body, condition, scope, } => lower_do_while(ctx, body, condition, *scope),
 
         // `break;` — branch to the innermost loop's exit block. The
         // current block becomes terminated; subsequent statements in
@@ -590,6 +577,19 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
                 .map(|(c, _b)| c.clone())
                 .ok_or_else(|| anyhow!("continue statement outside any loop"))?;
             ctx.block().br(&cont_label);
+            Ok(())
+        }
+
+        // Bare block: allocate scope if one exists, then lower statements
+        Stmt::Block { scope, body } => {
+            // Allocate scope for block if one exists
+            if let Some(block_scope) = scope {
+                crate::scope_objects::allocate_scope_at_entry(ctx, *block_scope)?;
+            }
+
+            // Lower statements in block
+            lower_stmts(ctx, body)?;
+
             Ok(())
         }
 
@@ -625,7 +625,7 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
         // Default position is preserved (it goes wherever it appears in
         // source order) — falling-through into the default case from the
         // preceding case is valid JS.
-        Stmt::Switch { discriminant, cases } => lower_switch(ctx, discriminant, cases),
+        Stmt::Switch { discriminant, cases, scope: _, } => lower_switch(ctx, discriminant, cases),
 
         // Labeled statement: set the pending label so the next loop
         // lowered (for/while/do-while) can register itself in
@@ -712,7 +712,7 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
         // not SSA registers, so they survive longjmp without explicit
         // save/restore. This is the key advantage of the alloca+mem2reg
         // strategy used by our LLVM backend.
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, try_scope: _, catch_scope: _, finally_scope: _, } => {
             lower_try(ctx, body, catch.as_ref(), finally.as_deref())
         }
 
@@ -851,6 +851,7 @@ fn lower_for(
     condition: Option<&perry_hir::Expr>,
     update: Option<&perry_hir::Expr>,
     body: &[Stmt],
+    scope: Option<ScopeId>,
 ) -> Result<()> {
     // Init runs once in the current block. A `let i = 0` here adds `i` to
     // ctx.locals, which the body can then load via LocalGet.
@@ -998,7 +999,14 @@ fn lower_for(
 
     // Body block.
     ctx.current_block = body_idx;
+
+    // Allocate scope for loop body if one exists
+    if let Some(body_scope) = scope {
+        crate::scope_objects::allocate_scope_at_entry(ctx, body_scope)?;
+    }
+
     lower_stmts(ctx, body)?;
+
     // Issue #74: insert an empty `asm sideeffect` in bodies whose
     // statements are all LLVM-pure (local-only arithmetic, no calls,
     // no heap mutation). Without this, clang -O3's loop-deletion
@@ -1102,7 +1110,7 @@ fn stmt_preserves_array_length(
         Stmt::Let { init, .. } => init
             .as_ref()
             .map_or(true, |e| expr_preserves_array_length(e, arr_id, bounded_idx_id)),
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             expr_preserves_array_length(condition, arr_id, bounded_idx_id)
                 && then_branch
                     .iter()
@@ -1112,13 +1120,13 @@ fn stmt_preserves_array_length(
                         .all(|s| stmt_preserves_array_length(s, arr_id, bounded_idx_id))
                 })
         }
-        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+        Stmt::While { condition, body, scope: _, } | Stmt::DoWhile { body, condition, scope: _, } => {
             expr_preserves_array_length(condition, arr_id, bounded_idx_id)
                 && body
                     .iter()
                     .all(|s| stmt_preserves_array_length(s, arr_id, bounded_idx_id))
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             init.as_ref()
                 .map_or(true, |s| stmt_preserves_array_length(s, arr_id, bounded_idx_id))
                 && condition.as_ref().map_or(true, |e| {
@@ -1131,7 +1139,7 @@ fn stmt_preserves_array_length(
                     .iter()
                     .all(|s| stmt_preserves_array_length(s, arr_id, bounded_idx_id))
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, try_scope: _, catch_scope: _, finally_scope: _, } => {
             body.iter()
                 .all(|s| stmt_preserves_array_length(s, arr_id, bounded_idx_id))
                 && catch.as_ref().map_or(true, |c| {
@@ -1144,7 +1152,7 @@ fn stmt_preserves_array_length(
                         .all(|s| stmt_preserves_array_length(s, arr_id, bounded_idx_id))
                 })
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, scope: _, } => {
             expr_preserves_array_length(discriminant, arr_id, bounded_idx_id)
                 && cases.iter().all(|c| {
                     c.test.as_ref().map_or(true, |e| {
@@ -1153,6 +1161,10 @@ fn stmt_preserves_array_length(
                         .iter()
                         .all(|s| stmt_preserves_array_length(s, arr_id, bounded_idx_id))
                 })
+        }
+        Stmt::Block { scope: _, body } => {
+            body.iter()
+                .all(|s| stmt_preserves_array_length(s, arr_id, bounded_idx_id))
         }
         Stmt::Labeled { body, .. } => {
             stmt_preserves_array_length(body.as_ref(), arr_id, bounded_idx_id)
@@ -1320,7 +1332,7 @@ fn expr_preserves_array_length(
 ///
 /// No break/continue support yet — body must fall through to the next
 /// loop iteration. Same limitation as `for`.
-fn lower_while(ctx: &mut FnCtx<'_>, condition: &perry_hir::Expr, body: &[Stmt]) -> Result<()> {
+fn lower_while(ctx: &mut FnCtx<'_>, condition: &perry_hir::Expr, body: &[Stmt], scope: Option<ScopeId>) -> Result<()> {
     let cond_idx = ctx.new_block("while.cond");
     let body_idx = ctx.new_block("while.body");
     let exit_idx = ctx.new_block("while.exit");
@@ -1346,7 +1358,14 @@ fn lower_while(ctx: &mut FnCtx<'_>, condition: &perry_hir::Expr, body: &[Stmt]) 
     }
 
     ctx.current_block = body_idx;
+
+    // Allocate scope for loop body if one exists
+    if let Some(body_scope) = scope {
+        crate::scope_objects::allocate_scope_at_entry(ctx, body_scope)?;
+    }
+
     lower_stmts(ctx, body)?;
+
     // Issue #74: see lower_for for rationale.
     if !ctx.block().is_terminated() && body_is_observably_side_effect_free(body) {
         ctx.block().asm_sideeffect_barrier();
@@ -1367,6 +1386,7 @@ fn lower_do_while(
     ctx: &mut FnCtx<'_>,
     body: &[Stmt],
     condition: &perry_hir::Expr,
+    scope: Option<ScopeId>,
 ) -> Result<()> {
     let body_idx = ctx.new_block("dowhile.body");
     let cond_idx = ctx.new_block("dowhile.cond");
@@ -1389,7 +1409,14 @@ fn lower_do_while(
     }
 
     ctx.current_block = body_idx;
+
+    // Allocate scope for loop body if one exists
+    if let Some(body_scope) = scope {
+        crate::scope_objects::allocate_scope_at_entry(ctx, body_scope)?;
+    }
+
     lower_stmts(ctx, body)?;
+
     // Issue #74: see lower_for for rationale.
     if !ctx.block().is_terminated() && body_is_observably_side_effect_free(body) {
         ctx.block().asm_sideeffect_barrier();
@@ -1613,6 +1640,8 @@ fn lower_if(
     condition: &perry_hir::Expr,
     then_branch: &[Stmt],
     else_branch: Option<&[Stmt]>,
+    then_scope: Option<ScopeId>,
+    else_scope: Option<ScopeId>,
 ) -> Result<()> {
     // Compile-time constant folding: when the condition involves only
     // known constants (e.g., `__platform__ === 1`), skip the dead branch
@@ -1641,20 +1670,34 @@ fn lower_if(
     // Emit the branch in the incoming current block.
     ctx.block().cond_br(&i1, &then_label, &else_label);
 
-    // Compile then branch.
+    // Compile then branch with eager scope allocation
     ctx.current_block = then_idx;
+
+    // Allocate scope for then branch if one exists
+    if let Some(scoped) = then_scope {
+        crate::scope_objects::allocate_scope_at_entry(ctx, scoped)?;
+    }
+
     lower_stmts(ctx, then_branch)?;
+
     if !ctx.block().is_terminated() {
         ctx.block().br(&merge_label);
     }
 
-    // Compile else branch. If there's no explicit else, the else block is
+    // Compile else branch with eager scope allocation. If there's no explicit else, the else block is
     // still created so both sides of the condBr have a valid target — it
     // just branches immediately to merge.
     ctx.current_block = else_idx;
+
+    // Allocate scope for else branch if one exists
     if let Some(else_stmts) = else_branch {
+        if let Some(scoped) = else_scope {
+            crate::scope_objects::allocate_scope_at_entry(ctx, scoped)?;
+        }
+
         lower_stmts(ctx, else_stmts)?;
     }
+
     if !ctx.block().is_terminated() {
         ctx.block().br(&merge_label);
     }
@@ -1669,6 +1712,7 @@ fn stmt_variant_name(s: &Stmt) -> &'static str {
         Stmt::Expr(_) => "Expr",
         Stmt::Let { .. } => "Let",
         Stmt::Return(_) => "Return",
+        Stmt::Block { .. } => "Block",
         Stmt::If { .. } => "If",
         Stmt::While { .. } => "While",
         Stmt::DoWhile { .. } => "DoWhile",

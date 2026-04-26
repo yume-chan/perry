@@ -516,7 +516,7 @@ impl JsEmitter {
                     self.output.push_str("return;\n");
                 }
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If { condition, then_branch, else_branch, .. } => {
                 self.write_indent();
                 self.output.push_str("if (");
                 self.emit_expr(condition);
@@ -536,7 +536,7 @@ impl JsEmitter {
                 }
                 self.writeln("}");
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 self.write_indent();
                 self.output.push_str("while (");
                 self.emit_expr(condition);
@@ -548,7 +548,7 @@ impl JsEmitter {
                 self.indent -= 1;
                 self.writeln("}");
             }
-            Stmt::DoWhile { body, condition } => {
+            Stmt::DoWhile { body, condition, .. } => {
                 self.writeln("do {");
                 self.indent += 1;
                 for s in body {
@@ -566,7 +566,7 @@ impl JsEmitter {
                 // Emit the body statement without extra indentation prefix
                 self.emit_stmt(body);
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For { init, condition, update, body, .. } => {
                 self.write_indent();
                 self.output.push_str("for (");
                 if let Some(init_stmt) = init {
@@ -626,7 +626,7 @@ impl JsEmitter {
                 self.emit_expr(expr);
                 self.output.push_str(";\n");
             }
-            Stmt::Try { body, catch, finally } => {
+            Stmt::Try { body, catch, finally, .. } => {
                 self.writeln("try {");
                 self.indent += 1;
                 for s in body {
@@ -657,7 +657,7 @@ impl JsEmitter {
                 }
                 self.writeln("}");
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch { discriminant, cases, .. } => {
                 self.write_indent();
                 self.output.push_str("switch (");
                 self.emit_expr(discriminant);
@@ -680,6 +680,11 @@ impl JsEmitter {
                 }
                 self.indent -= 1;
                 self.writeln("}");
+            }
+            Stmt::Block { body, .. } => {
+                for s in body {
+                    self.emit_stmt(s);
+                }
             }
         }
     }

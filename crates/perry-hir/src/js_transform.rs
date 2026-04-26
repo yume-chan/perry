@@ -194,22 +194,25 @@ fn transform_stmt(
             transform_expr(expr, js_imports, extern_func_to_js, local_name_to_js, tracker);
         }
         Stmt::Return(None) => {}
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::Block { scope: _, body } => {
+            transform_stmts(body, js_imports, extern_func_to_js, local_name_to_js, tracker);
+        }
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             transform_expr(condition, js_imports, extern_func_to_js, local_name_to_js, tracker);
             transform_stmts(then_branch, js_imports, extern_func_to_js, local_name_to_js, tracker);
             if let Some(else_b) = else_branch {
                 transform_stmts(else_b, js_imports, extern_func_to_js, local_name_to_js, tracker);
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             transform_expr(condition, js_imports, extern_func_to_js, local_name_to_js, tracker);
             transform_stmts(body, js_imports, extern_func_to_js, local_name_to_js, tracker);
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             transform_stmts(body, js_imports, extern_func_to_js, local_name_to_js, tracker);
             transform_expr(condition, js_imports, extern_func_to_js, local_name_to_js, tracker);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 transform_stmt(init_stmt, js_imports, extern_func_to_js, local_name_to_js, tracker);
             }
@@ -224,7 +227,7 @@ fn transform_stmt(
         Stmt::Labeled { body, .. } => {
             transform_stmt(body, js_imports, extern_func_to_js, local_name_to_js, tracker);
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             transform_expr(discriminant, js_imports, extern_func_to_js, local_name_to_js, tracker);
             for case in cases {
                 if let Some(test) = &mut case.test {
@@ -236,7 +239,7 @@ fn transform_stmt(
         Stmt::Throw(expr) => {
             transform_expr(expr, js_imports, extern_func_to_js, local_name_to_js, tracker);
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             transform_stmts(body, js_imports, extern_func_to_js, local_name_to_js, tracker);
             if let Some(catch_clause) = catch {
                 transform_stmts(&mut catch_clause.body, js_imports, extern_func_to_js, local_name_to_js, tracker);
@@ -1067,7 +1070,7 @@ fn scan_for_native_func_returns(
                 scan_for_native_func_returns(s, func_return_instances, local_native_instances, local_id_native_instances);
             }
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             for s in body {
                 scan_for_native_func_returns(s, func_return_instances, local_native_instances, local_id_native_instances);
             }
@@ -1151,7 +1154,12 @@ fn fix_native_instance_stmt(stmt: &mut Stmt, native_instances: &HashMap<String, 
         }
         Stmt::Return(Some(e)) => fix_native_instance_expr(e, native_instances, local_id_instances),
         Stmt::Return(None) => {}
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::Block { scope: _, body } => {
+            for s in body {
+                fix_native_instance_stmt(s, native_instances, local_id_instances);
+            }
+        }
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             fix_native_instance_expr(condition, native_instances, local_id_instances);
             for s in then_branch {
                 fix_native_instance_stmt(s, native_instances, local_id_instances);
@@ -1162,13 +1170,13 @@ fn fix_native_instance_stmt(stmt: &mut Stmt, native_instances: &HashMap<String, 
                 }
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             fix_native_instance_expr(condition, native_instances, local_id_instances);
             for s in body {
                 fix_native_instance_stmt(s, native_instances, local_id_instances);
             }
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             for s in body {
                 fix_native_instance_stmt(s, native_instances, local_id_instances);
             }
@@ -1177,7 +1185,7 @@ fn fix_native_instance_stmt(stmt: &mut Stmt, native_instances: &HashMap<String, 
         Stmt::Labeled { body, .. } => {
             fix_native_instance_stmt(body, native_instances, local_id_instances);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 fix_native_instance_stmt(init_stmt, native_instances, local_id_instances);
             }
@@ -1191,7 +1199,7 @@ fn fix_native_instance_stmt(stmt: &mut Stmt, native_instances: &HashMap<String, 
                 fix_native_instance_stmt(s, native_instances, local_id_instances);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             fix_native_instance_expr(discriminant, native_instances, local_id_instances);
             for case in cases {
                 if let Some(ref mut test) = case.test {
@@ -1202,7 +1210,7 @@ fn fix_native_instance_stmt(stmt: &mut Stmt, native_instances: &HashMap<String, 
                 }
             }
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             for s in body {
                 fix_native_instance_stmt(s, native_instances, local_id_instances);
             }
@@ -1562,7 +1570,7 @@ fn scan_stmt_for_native_instances(
                 scan_stmt_for_native_instances(s, local_names, local_ids);
             }
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             for s in body {
                 scan_stmt_for_native_instances(s, local_names, local_ids);
             }
@@ -1595,7 +1603,12 @@ fn fix_native_instance_stmt_with_locals(
         }
         Stmt::Return(Some(e)) => fix_native_instance_expr_with_locals(e, native_instances, local_id_instances),
         Stmt::Return(None) => {}
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::Block { scope: _, body } => {
+            for s in body {
+                fix_native_instance_stmt_with_locals(s, native_instances, local_id_instances);
+            }
+        }
+        Stmt::If { condition, then_branch, else_branch, .. } => {
             fix_native_instance_expr_with_locals(condition, native_instances, local_id_instances);
             for s in then_branch {
                 fix_native_instance_stmt_with_locals(s, native_instances, local_id_instances);
@@ -1606,13 +1619,13 @@ fn fix_native_instance_stmt_with_locals(
                 }
             }
         }
-        Stmt::While { condition, body } => {
+        Stmt::While { condition, body, .. } => {
             fix_native_instance_expr_with_locals(condition, native_instances, local_id_instances);
             for s in body {
                 fix_native_instance_stmt_with_locals(s, native_instances, local_id_instances);
             }
         }
-        Stmt::DoWhile { body, condition } => {
+        Stmt::DoWhile { body, condition, .. } => {
             for s in body {
                 fix_native_instance_stmt_with_locals(s, native_instances, local_id_instances);
             }
@@ -1621,7 +1634,7 @@ fn fix_native_instance_stmt_with_locals(
         Stmt::Labeled { body, .. } => {
             fix_native_instance_stmt_with_locals(body, native_instances, local_id_instances);
         }
-        Stmt::For { init, condition, update, body } => {
+        Stmt::For { init, condition, update, body, .. } => {
             if let Some(init_stmt) = init {
                 fix_native_instance_stmt_with_locals(init_stmt.as_mut(), native_instances, local_id_instances);
             }
@@ -1635,7 +1648,7 @@ fn fix_native_instance_stmt_with_locals(
                 fix_native_instance_stmt_with_locals(s, native_instances, local_id_instances);
             }
         }
-        Stmt::Try { body, catch, finally } => {
+        Stmt::Try { body, catch, finally, .. } => {
             for s in body {
                 fix_native_instance_stmt_with_locals(s, native_instances, local_id_instances);
             }
@@ -1651,7 +1664,7 @@ fn fix_native_instance_stmt_with_locals(
             }
         }
         Stmt::Throw(e) => fix_native_instance_expr_with_locals(e, native_instances, local_id_instances),
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch { discriminant, cases, .. } => {
             fix_native_instance_expr_with_locals(discriminant, native_instances, local_id_instances);
             for case in cases {
                 if let Some(test) = &mut case.test {
