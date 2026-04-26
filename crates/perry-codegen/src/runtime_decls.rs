@@ -136,9 +136,10 @@ pub fn declare_phase_b_strings(module: &mut LlModule) {
 
     // Closure / function-as-value primitives (Phase D).
     //
-    // - js_closure_alloc(func_ptr, capture_count) -> *mut ClosureHeader
+    // - js_closure_alloc(func_ptr, capture_count, arity) -> *mut ClosureHeader
     //     Allocates a closure object pointing at the given function with
-    //     space for `capture_count` captured-value slots.
+    //     space for `capture_count` captured-value slots, and sets arity
+    //     to the number of parameters the closure's function expects.
     // - js_closure_set/get_capture_f64(closure, idx, value)
     //     Read/write a captured value (NaN-boxed double) at slot `idx`.
     // - js_closure_call0..call16(closure, args…) -> double
@@ -149,7 +150,7 @@ pub fn declare_phase_b_strings(module: &mut LlModule) {
     //     The runtime exports js_closure_call0 through js_closure_call16
     //     (see crates/perry-runtime/src/closure.rs); the call site cap in
     //     lower_call.rs matches.
-    module.declare_function("js_closure_alloc", I64, &[PTR, I32]);
+    module.declare_function("js_closure_alloc", I64, &[PTR, I32, I32]);
     module.declare_function("js_closure_set_capture_f64", VOID, &[I64, I32, DOUBLE]);
     module.declare_function("js_closure_get_capture_f64", DOUBLE, &[I64, I32]);
     module.declare_function("js_closure_set_capture_ptr", VOID, &[I64, I32, I64]);

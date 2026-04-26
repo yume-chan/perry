@@ -3185,10 +3185,11 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             let blk = ctx.block();
             let func_ref = format!("@{}", func_name);
             let cap_count = total_caps.to_string();
+            let arity = params.len().min(16).to_string();
             let closure_handle = blk.call(
                 I64,
                 "js_closure_alloc",
-                &[(PTR, &func_ref), (I32, &cap_count)],
+                &[(PTR, &func_ref), (I32, &cap_count), (I32, &arity)],
             );
 
             // Store captured values: use appropriate function based on whether
@@ -4894,7 +4895,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 let closure_handle = blk.call(
                     I64,
                     "js_closure_alloc",
-                    &[(PTR, &wrap_ptr), (I32, "0")],
+                    &[(PTR, &wrap_ptr), (I32, "0"), (I32, "0")],
                 );
                 Ok(nanbox_pointer_inline(blk, &closure_handle))
             }

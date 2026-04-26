@@ -44,9 +44,10 @@ pub struct ClosureHeader {
 /// that slot 0 is reserved for `this`. The flag is preserved in the header
 /// for later use by `js_closure_unbind_this`, but the actual allocation size
 /// uses only the lower 31 bits.
+/// `arity` is the number of parameters the closure's function expects.
 /// Returns pointer to ClosureHeader
 #[no_mangle]
-pub extern "C" fn js_closure_alloc(func_ptr: *const u8, capture_count: u32) -> *mut ClosureHeader {
+pub extern "C" fn js_closure_alloc(func_ptr: *const u8, capture_count: u32, arity: i32) -> *mut ClosureHeader {
     let actual_count = real_capture_count(capture_count) as usize;
     let captures_size = actual_count * 8; // Each capture is 8 bytes (f64 or i64)
     let total_size = std::mem::size_of::<ClosureHeader>() + captures_size;
@@ -58,7 +59,7 @@ pub extern "C" fn js_closure_alloc(func_ptr: *const u8, capture_count: u32) -> *
         (*ptr).func_ptr = func_ptr;
         (*ptr).capture_count = capture_count; // Preserve flag in high bit
         (*ptr).type_tag = CLOSURE_MAGIC;
-        (*ptr).arity = 0; // Default arity for dynamically allocated closures (will be updated if needed)
+        (*ptr).arity = arity;
     }
 
     ptr
@@ -93,8 +94,8 @@ pub extern "C" fn js_closure_set_capture_f64(closure: *mut ClosureHeader, index:
 /// Get a captured value (as i64 pointer) by index
 #[no_mangle]
 pub extern "C" fn js_closure_get_capture_ptr(closure: *const ClosureHeader, index: u32) -> i64 {
-    if closure.is_null() { 
-        return 0; 
+    if closure.is_null() {
+        return 0;
     }
     unsafe {
         let captures_ptr = (closure as *const u8).add(std::mem::size_of::<ClosureHeader>()) as *const i64;
@@ -106,8 +107,8 @@ pub extern "C" fn js_closure_get_capture_ptr(closure: *const ClosureHeader, inde
 /// Set a captured value (as i64 pointer) by index
 #[no_mangle]
 pub extern "C" fn js_closure_set_capture_ptr(closure: *mut ClosureHeader, index: u32, value: i64) {
-    if closure.is_null() { 
-        return; 
+    if closure.is_null() {
+        return;
     }
     unsafe {
         let captures_ptr = (closure as *mut u8).add(std::mem::size_of::<ClosureHeader>()) as *mut i64;
@@ -192,14 +193,14 @@ pub extern "C" fn js_closure_call0(closure: *const ClosureHeader, param_count: i
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
+    let arity = if closure.is_null() {
+        0
+    } else {
         unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -232,7 +233,7 @@ pub extern "C" fn js_closure_call0(closure: *const ClosureHeader, param_count: i
         7..=16 => {
             // For arity 7-16, we use a generic transmute to the maximum 16-param function
             let func: extern "C" fn(*const ClosureHeader, i32, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64 = unsafe { std::mem::transmute(func_ptr) };
-            func(closure, param_count, 
+            func(closure, param_count,
                 f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED),
                 f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED),
                 f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED), f64::from_bits(crate::value::TAG_UNDEFINED),
@@ -256,14 +257,16 @@ pub extern "C" fn js_closure_call1(closure: *const ClosureHeader, param_count: i
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
+eprint!("arity: {}, func_ptr: {:p}\n", arity, func_ptr);
+
     match arity {
         0 => {
             // This shouldn't normally happen, but handle it gracefully
@@ -320,14 +323,14 @@ pub extern "C" fn js_closure_call2(closure: *const ClosureHeader, param_count: i
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -362,14 +365,14 @@ pub extern "C" fn js_closure_call3(closure: *const ClosureHeader, param_count: i
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -408,14 +411,14 @@ pub extern "C" fn js_closure_call4(closure: *const ClosureHeader, param_count: i
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -458,14 +461,14 @@ pub extern "C" fn js_closure_call5(closure: *const ClosureHeader, param_count: i
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -512,14 +515,14 @@ pub extern "C" fn js_closure_call6(closure: *const ClosureHeader, param_count: i
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -570,14 +573,14 @@ pub extern "C" fn js_closure_call7(closure: *const ClosureHeader, param_count: i
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -632,14 +635,14 @@ pub extern "C" fn js_closure_call8(closure: *const ClosureHeader, param_count: i
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -698,14 +701,14 @@ pub extern "C" fn js_closure_call9(closure: *const ClosureHeader, param_count: i
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -768,14 +771,14 @@ pub extern "C" fn js_closure_call10(closure: *const ClosureHeader, param_count: 
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -842,14 +845,14 @@ pub extern "C" fn js_closure_call11(closure: *const ClosureHeader, param_count: 
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -920,14 +923,14 @@ pub extern "C" fn js_closure_call12(closure: *const ClosureHeader, param_count: 
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -1002,14 +1005,14 @@ pub extern "C" fn js_closure_call13(closure: *const ClosureHeader, param_count: 
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -1088,14 +1091,14 @@ pub extern "C" fn js_closure_call14(closure: *const ClosureHeader, param_count: 
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -1178,14 +1181,14 @@ pub extern "C" fn js_closure_call15(closure: *const ClosureHeader, param_count: 
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -1272,14 +1275,14 @@ pub extern "C" fn js_closure_call16(closure: *const ClosureHeader, param_count: 
     if func_ptr == BOUND_METHOD_FUNC_PTR {
         return unsafe { dispatch_bound_method(closure, &[arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14, arg15]) };
     }
-    
+
     // Get arity to determine how many parameters the wrapper expects
-    let arity = if closure.is_null() { 
-        0 
-    } else { 
-        unsafe { (*closure).arity } 
+    let arity = if closure.is_null() {
+        0
+    } else {
+        unsafe { (*closure).arity }
     };
-    
+
     match arity {
         0 => {
             let func: extern "C" fn(*const ClosureHeader, i32) -> f64 = unsafe { std::mem::transmute(func_ptr) };
@@ -1574,7 +1577,7 @@ pub extern "C" fn js_closure_unbind_this(val: f64) -> f64 {
             return val;
         }
         // Clone the closure with slot 0 set to undefined
-        let new_closure = js_closure_alloc((*header).func_ptr, raw_count);
+        let new_closure = js_closure_alloc((*header).func_ptr, raw_count, (*header).arity);
         let src_captures = (ptr as *const u8).add(std::mem::size_of::<ClosureHeader>()) as *const f64;
         let dst_captures = (new_closure as *mut u8).add(std::mem::size_of::<ClosureHeader>()) as *mut f64;
         // Set slot 0 to undefined
@@ -1640,7 +1643,7 @@ mod tests {
 
     #[test]
     fn test_closure_basic() {
-        let closure = js_closure_alloc(test_closure_func as *const u8, 1);
+        let closure = js_closure_alloc(test_closure_func as *const u8, 1, 0);
         js_closure_set_capture_f64(closure, 0, 21.0);
         let result = js_closure_call0(closure, 0);
         assert_eq!(result, 42.0);

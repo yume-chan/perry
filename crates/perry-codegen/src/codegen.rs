@@ -1577,9 +1577,9 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         // The linker will still optimize away unused symbols.
         let static_closure_name = format!("__perry_static_closure_{}", original_name);
         let arity_str = f.params.len().min(16).to_string();
-        let init = format!("{{ ptr @{}, i32 0, i32 1129074515, i32 {}, i32 0 }}", wrap_name, arity_str);
+        let init = format!("{{ ptr @{}, i32 0, i32 1129074515, i32 {} }}", wrap_name, arity_str);
         llmod.add_raw_global(format!(
-            "@{} = constant {{ ptr, i32, i32, i32, i32 }} {}",
+            "@{} = constant {{ ptr, i32, i32, i32 }} {}",
             static_closure_name, init
         ));
     }

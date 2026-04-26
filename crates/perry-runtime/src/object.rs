@@ -3891,6 +3891,7 @@ pub extern "C" fn js_native_module_bind_method(
     let closure = crate::closure::js_closure_alloc(
         crate::closure::BOUND_METHOD_FUNC_PTR,
         3,
+        0,
     );
     crate::closure::js_closure_set_capture_f64(closure, 0, namespace_obj);
     crate::closure::js_closure_set_capture_ptr(closure, 1, heap_name as i64);

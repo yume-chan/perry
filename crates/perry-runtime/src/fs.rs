@@ -422,6 +422,7 @@ unsafe fn make_stats_predicate(value: bool) -> f64 {
     let closure = crate::closure::js_closure_alloc(
         stats_closure_return_captured as *const u8,
         1,
+        0,
     );
     crate::closure::js_closure_set_capture_f64(closure, 0, f64::from_bits(tag));
     // NaN-box the closure pointer with POINTER_TAG so the dynamic
@@ -735,7 +736,7 @@ fn bytes_from_value(v: f64) -> Vec<u8> {
 /// Allocate a fresh ClosureHeader whose func_ptr is `func` and
 /// whose slot 0 holds the given stream id.
 fn make_stream_closure(func: extern "C" fn(), stream_id: usize) -> *mut ClosureHeader {
-    let closure = js_closure_alloc(func as *const u8, 1);
+    let closure = js_closure_alloc(func as *const u8, 1, 0);
     js_closure_set_capture_ptr(closure, 0, stream_id as i64);
     closure
 }

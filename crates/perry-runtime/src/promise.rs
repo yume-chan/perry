@@ -177,14 +177,16 @@ pub extern "C" fn js_promise_resolve_with_promise(outer: *mut Promise, inner: *m
                 // Create a resolve forwarding closure
                 let resolve_closure = crate::closure::js_closure_alloc(
                     promise_forward_resolve as *const u8,
-                    1
+                    1,
+                    0
                 );
                 crate::closure::js_closure_set_capture_ptr(resolve_closure, 0, outer_i64);
 
                 // Create a reject forwarding closure
                 let reject_closure = crate::closure::js_closure_alloc(
                     promise_forward_reject as *const u8,
-                    1
+                    1,
+                    0
                 );
                 crate::closure::js_closure_set_capture_ptr(reject_closure, 0, outer_i64);
 
@@ -433,7 +435,7 @@ pub extern "C" fn js_array_from_async(input: f64) -> f64 {
     //   [0] result_promise (Promise to resolve at the end)
     //   [1] result_arr (Array to push each value into)
     //   [2] iter object (raw pointer; we re-NaN-box on .next() call)
-    let chain_closure = js_closure_alloc(array_from_async_step as *const u8, 3);
+    let chain_closure = js_closure_alloc(array_from_async_step as *const u8, 3, 0);
     js_closure_set_capture_ptr(chain_closure, 0, result_promise as i64);
     js_closure_set_capture_ptr(chain_closure, 1, result_arr as i64);
     js_closure_set_capture_ptr(chain_closure, 2, raw_ptr as i64);
@@ -662,11 +664,11 @@ pub extern "C" fn js_promise_new_with_executor(executor: *const crate::closure::
 
     // Create resolve closure that captures the promise pointer
     // The resolve function signature is: (closure: *const ClosureHeader, value: f64) -> f64
-    let resolve_closure = js_closure_alloc(promise_resolve_fn as *const u8, 1);
+    let resolve_closure = js_closure_alloc(promise_resolve_fn as *const u8, 1, 0);
     js_closure_set_capture_ptr(resolve_closure, 0, promise_i64);
 
     // Create reject closure that captures the promise pointer
-    let reject_closure = js_closure_alloc(promise_reject_fn as *const u8, 1);
+    let reject_closure = js_closure_alloc(promise_reject_fn as *const u8, 1, 0);
     js_closure_set_capture_ptr(reject_closure, 0, promise_i64);
 
     // Call the executor with (resolve_closure, reject_closure)
@@ -772,7 +774,7 @@ pub extern "C" fn js_promise_all(promises_arr: *const crate::array::ArrayHeader)
 
         // Create fulfill closure for this promise
         // Captures: [result_promise, results_arr, state_arr, index]
-        let fulfill_closure = js_closure_alloc(promise_all_fulfill_handler as *const u8, 4);
+        let fulfill_closure = js_closure_alloc(promise_all_fulfill_handler as *const u8, 4, 0);
         js_closure_set_capture_ptr(fulfill_closure, 0, result_promise as i64);
         js_closure_set_capture_ptr(fulfill_closure, 1, results_arr as i64);
         js_closure_set_capture_ptr(fulfill_closure, 2, state_arr as i64);
@@ -780,7 +782,7 @@ pub extern "C" fn js_promise_all(promises_arr: *const crate::array::ArrayHeader)
 
         // Create reject closure for this promise
         // Captures: [result_promise, state_arr]
-        let reject_closure = js_closure_alloc(promise_all_reject_handler as *const u8, 2);
+        let reject_closure = js_closure_alloc(promise_all_reject_handler as *const u8, 2, 0);
         js_closure_set_capture_ptr(reject_closure, 0, result_promise as i64);
         js_closure_set_capture_ptr(reject_closure, 1, state_arr as i64);
 
@@ -903,6 +905,7 @@ pub extern "C" fn js_promise_race(promises_arr: *const crate::array::ArrayHeader
         let resolve_closure = js_closure_alloc(
             promise_race_resolve_handler as *const u8,
             1, // 1 capture: result_promise
+            0,
         );
         js_closure_set_capture_ptr(resolve_closure, 0, result_promise as i64);
 
@@ -910,6 +913,7 @@ pub extern "C" fn js_promise_race(promises_arr: *const crate::array::ArrayHeader
         let reject_closure = js_closure_alloc(
             promise_race_reject_handler as *const u8,
             1,
+            0,
         );
         js_closure_set_capture_ptr(reject_closure, 0, result_promise as i64);
 
@@ -1031,14 +1035,14 @@ pub extern "C" fn js_promise_all_settled(promises_arr: *const crate::array::Arra
         }
 
         // Fulfill: store {status:"fulfilled", value:v}
-        let fulfill_closure = js_closure_alloc(promise_all_settled_fulfill_handler as *const u8, 4);
+        let fulfill_closure = js_closure_alloc(promise_all_settled_fulfill_handler as *const u8, 4, 0);
         js_closure_set_capture_ptr(fulfill_closure, 0, result_promise as i64);
         js_closure_set_capture_ptr(fulfill_closure, 1, results_arr as i64);
         js_closure_set_capture_ptr(fulfill_closure, 2, state_arr as i64);
         js_closure_set_capture_f64(fulfill_closure, 3, i as f64);
 
         // Reject: store {status:"rejected", reason:r}
-        let reject_closure = js_closure_alloc(promise_all_settled_reject_handler as *const u8, 4);
+        let reject_closure = js_closure_alloc(promise_all_settled_reject_handler as *const u8, 4, 0);
         js_closure_set_capture_ptr(reject_closure, 0, result_promise as i64);
         js_closure_set_capture_ptr(reject_closure, 1, results_arr as i64);
         js_closure_set_capture_ptr(reject_closure, 2, state_arr as i64);
@@ -1158,11 +1162,11 @@ pub extern "C" fn js_promise_any(promises_arr: *const crate::array::ArrayHeader)
             return result_promise;
         }
 
-        let fulfill_closure = js_closure_alloc(promise_any_fulfill_handler as *const u8, 2);
+        let fulfill_closure = js_closure_alloc(promise_any_fulfill_handler as *const u8, 2, 0);
         js_closure_set_capture_ptr(fulfill_closure, 0, result_promise as i64);
         js_closure_set_capture_ptr(fulfill_closure, 1, state_arr as i64);
 
-        let reject_closure = js_closure_alloc(promise_any_reject_handler as *const u8, 4);
+        let reject_closure = js_closure_alloc(promise_any_reject_handler as *const u8, 4, 0);
         js_closure_set_capture_ptr(reject_closure, 0, result_promise as i64);
         js_closure_set_capture_ptr(reject_closure, 1, errors_arr as i64);
         js_closure_set_capture_ptr(reject_closure, 2, state_arr as i64);
@@ -1271,6 +1275,7 @@ pub extern "C" fn js_promise_with_resolvers() -> *mut crate::object::ObjectHeade
     let resolve_fn = js_closure_alloc(
         with_resolvers_resolve_handler as *const u8,
         1, // 1 capture: the promise pointer
+        0,
     );
     unsafe {
         crate::closure::js_closure_set_capture_f64(resolve_fn, 0, promise_box);
@@ -1281,6 +1286,7 @@ pub extern "C" fn js_promise_with_resolvers() -> *mut crate::object::ObjectHeade
     let reject_fn = js_closure_alloc(
         with_resolvers_reject_handler as *const u8,
         1,
+        0,
     );
     unsafe {
         crate::closure::js_closure_set_capture_f64(reject_fn, 0, promise_box);

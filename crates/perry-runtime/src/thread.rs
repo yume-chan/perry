@@ -508,6 +508,7 @@ unsafe fn deserialize_jsvalue(sv: &SerializedValue) -> u64 {
             let closure = closure::js_closure_alloc(
                 *func_ptr as *const u8,
                 *capture_count,
+                0,
             );
             let captures_base = (closure as *mut u8).add(std::mem::size_of::<ClosureHeader>()) as *mut f64;
             for (i, cap) in captures.iter().enumerate() {
@@ -685,7 +686,7 @@ unsafe fn parallel_map_impl(
                 // Reconstruct closure on this thread's arena
                 let local_closure: *const ClosureHeader = if let Some(ref caps) = captures_ref {
                     let (fp, cc, ref cap_vals) = **caps;
-                    let c = closure::js_closure_alloc(fp as *const u8, cc);
+                    let c = closure::js_closure_alloc(fp as *const u8, cc, 0);
                     let base = (c as *mut u8).add(std::mem::size_of::<ClosureHeader>()) as *mut f64;
                     for (i, cap) in cap_vals.iter().enumerate() {
                         *base.add(i) = f64::from_bits(deserialize_jsvalue(cap));
@@ -872,7 +873,7 @@ unsafe fn parallel_filter_impl(
 
                 let local_closure: *const ClosureHeader = if let Some(ref caps) = captures_ref {
                     let (fp, cc, ref cap_vals) = **caps;
-                    let c = closure::js_closure_alloc(fp as *const u8, cc);
+                    let c = closure::js_closure_alloc(fp as *const u8, cc, 0);
                     let base = (c as *mut u8).add(std::mem::size_of::<ClosureHeader>()) as *mut f64;
                     for (i, cap) in cap_vals.iter().enumerate() {
                         *base.add(i) = f64::from_bits(deserialize_jsvalue(cap));
@@ -1016,7 +1017,7 @@ unsafe fn spawn_impl(
     std::thread::spawn(move || {
         // Reconstruct closure in this thread's arena
         let local_closure: *const ClosureHeader = if let Some((cc, ref cap_vals)) = serialized_captures {
-            let c = closure::js_closure_alloc(func_usize as *const u8, cc);
+            let c = closure::js_closure_alloc(func_usize as *const u8, cc, 0);
             let base = (c as *mut u8).add(std::mem::size_of::<ClosureHeader>()) as *mut f64;
             for (i, cap) in cap_vals.iter().enumerate() {
                 unsafe {
@@ -1026,7 +1027,7 @@ unsafe fn spawn_impl(
             c as *const ClosureHeader
         } else {
             // No captures — create a minimal closure header
-            closure::js_closure_alloc(func_usize as *const u8, 0)
+            closure::js_closure_alloc(func_usize as *const u8, 0, 0)
                 as *const ClosureHeader
         };
 

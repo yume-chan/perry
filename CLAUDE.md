@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.149
+**Current Version:** 0.5.150
 
 ## TypeScript Parity Status
 
@@ -171,6 +171,10 @@ Keep entries to 1-2 lines max. Full details in CHANGELOG.md.
 - **v0.5.146** — Fix unnecessary scope object allocation when no closures exist. Root cause: capture analysis marked ALL variable accesses as "captured" even when no closures existed in the function. Now `inside_closure: bool` flag in CaptureAnalyzer tracks when walking inside closure bodies; variables are only marked captured if accessed inside a closure. Non-closure scopes generate no scope object allocations, and code paths with no closures whatsoever (e.g. `not-closure.ts`) have zero scope overhead. Verified: no `js_scope_object_alloc` calls generated when closures absent. Lazy allocation still applies: root scopes allocated at entry, nested scopes on first access only.
 
 - **v0.5.145** — Fix exported arrow functions returning NaN at runtime. Root cause: `export const fn = () => {}` was lowered to a closure stored in a global, but the getter function returned the uninitialized global (0.0). Now intercept exported arrow functions in `lower_module_decl` and convert to normal function declarations, routing through the same path as `export function` declarations. Arrow parameters (Vec<Pat>) and body (expression or block) are properly lowered, with parameter defaults and return types extracted and registered for call-site inference.
+
+- **v0.5.150** — Extend `js_closure_alloc` to accept and set arity parameter (3rd arg). Updated all call sites across expr.rs, object.rs, promise.rs, thread.rs, fs.rs, and sqlite.rs to pass computed arity or 0 for bound methods/callbacks. Now all dynamically-allocated closures preserve their arity field from creation.
+
+- **v0.5.149** — Fix closure optional parameter handling via hidden `param_count` parameter. Generated closures now receive the actual argument count, read from parameter values or construct defaults accordingly.
 
 - **v0.5.144** — Fix closure variable capture via scope objects + inline transform bug. (1) Inline transform was skipping functions returning closures with `enclosing_func_id: Some(_)` due to pattern matching on `enclosing_func_id: None` only; removed the constraint so any closure capturing parameters prevents inlining. (2) Let statement codegen now writes captured variables to scope objects during initialization, ensuring nested closures can read values from peers (e.g., return closure calling multiple captured closures). Scope object architecture now fully functional: variables are allocated once per scope, captured closures receive pointers at creation time, closure bodies read from shared scope objects ensuring single source of truth for mutable captures.
 

@@ -483,7 +483,7 @@ fn build_stream_object() -> *mut crate::object::ObjectHeader {
 
     let packed = b"write\0";
     let obj = js_object_alloc_with_shape(0x7FFF_FF22, 1, packed.as_ptr(), packed.len() as u32);
-    let closure = js_closure_alloc(process_stream_write_stub as *const u8, 0);
+    let closure = js_closure_alloc(process_stream_write_stub as *const u8, 0, 0);
     let cval = JSValue::pointer(closure as *const u8);
     js_object_set_field(obj, 0, cval);
     obj
