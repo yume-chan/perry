@@ -105,9 +105,8 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
             let blk = ctx.block();
             let closure_handle = unbox_to_i64(blk, &recv_box);
             let runtime_fn = format!("js_closure_call{}", effective_args.len());
-            let param_count = (effective_args.len() as i32).to_string();
             let mut call_args: Vec<(crate::types::LlvmType, &str)> =
-                vec![(I64, &closure_handle), (I32, &param_count)];
+                vec![(I64, &closure_handle)];
             for v in &effective_args {
                 call_args.push((DOUBLE, v.as_str()));
             }
@@ -1778,9 +1777,8 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
         let blk = ctx.block();
         let closure_handle = unbox_to_i64(blk, &recv_box);
         let runtime_fn = format!("js_closure_call{}", args.len());
-        let param_count = (args.len() as i32).to_string();
         let mut call_args: Vec<(crate::types::LlvmType, &str)> = 
-            vec![(I64, &closure_handle), (I32, &param_count)];
+            vec![(I64, &closure_handle)];
         for v in &lowered_args {
             call_args.push((DOUBLE, v.as_str()));
         }

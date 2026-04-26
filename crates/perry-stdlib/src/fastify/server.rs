@@ -154,7 +154,7 @@ pub unsafe extern "C" fn js_fastify_listen(app_handle: Handle, opts: f64, callba
 
         // Call callback(null, address)
         let closure_ptr = callback as *const perry_runtime::ClosureHeader;
-        perry_runtime::js_closure_call2(closure_ptr, 2, f64::from_bits(JSValue::null().bits()), addr_val);
+        perry_runtime::js_closure_call2(closure_ptr, f64::from_bits(JSValue::null().bits()), addr_val);
     }
 
     println!("Server listening on http://0.0.0.0:{}", port);
@@ -340,7 +340,7 @@ fn event_loop(app_handle: Handle, request_rx: &mut mpsc::Receiver<FastifyPending
                     // Call handler(request, reply) - both are the context handle
                     let result = unsafe {
                         let closure_ptr = handler as *const perry_runtime::ClosureHeader;
-                        perry_runtime::js_closure_call2(closure_ptr, 2, nanboxed_ctx, nanboxed_ctx)
+                        perry_runtime::js_closure_call2(closure_ptr, nanboxed_ctx, nanboxed_ctx)
                     };
 
                     // Process any async operations
@@ -392,7 +392,7 @@ fn event_loop(app_handle: Handle, request_rx: &mut mpsc::Receiver<FastifyPending
 /// Returns true if the hook sent a response (e.g., 401 from auth middleware).
 unsafe fn call_hook_awaiting(hook: ClosurePtr, ctx_f64: f64, ctx_handle: Handle) -> bool {
     let closure_ptr = hook as *const perry_runtime::ClosureHeader;
-    let result = perry_runtime::js_closure_call2(closure_ptr, 2, ctx_f64, ctx_f64);
+    let result = perry_runtime::js_closure_call2(closure_ptr, ctx_f64, ctx_f64);
 
     // Process pending async operations
     crate::common::js_stdlib_process_pending();

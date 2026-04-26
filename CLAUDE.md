@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.150
+**Current Version:** 0.5.151
 
 ## TypeScript Parity Status
 
@@ -171,6 +171,8 @@ Keep entries to 1-2 lines max. Full details in CHANGELOG.md.
 - **v0.5.146** — Fix unnecessary scope object allocation when no closures exist. Root cause: capture analysis marked ALL variable accesses as "captured" even when no closures existed in the function. Now `inside_closure: bool` flag in CaptureAnalyzer tracks when walking inside closure bodies; variables are only marked captured if accessed inside a closure. Non-closure scopes generate no scope object allocations, and code paths with no closures whatsoever (e.g. `not-closure.ts`) have zero scope overhead. Verified: no `js_scope_object_alloc` calls generated when closures absent. Lazy allocation still applies: root scopes allocated at entry, nested scopes on first access only.
 
 - **v0.5.145** — Fix exported arrow functions returning NaN at runtime. Root cause: `export const fn = () => {}` was lowered to a closure stored in a global, but the getter function returned the uninitialized global (0.0). Now intercept exported arrow functions in `lower_module_decl` and convert to normal function declarations, routing through the same path as `export function` declarations. Arrow parameters (Vec<Pat>) and body (expression or block) are properly lowered, with parameter defaults and return types extracted and registered for call-site inference.
+
+- **v0.5.151** — Remove redundant `param_count` parameter from `js_closure_callN`. Investigation verified 100% of 7,380+ closure calls have param_count == N; removed parameter across runtime (closure.rs), codegen (runtime_decls.rs, codegen.rs, lower_call.rs), stdlib, and all call sites (value.rs, array.rs, object.rs, etc.). Closure functions now receive exactly N arguments; wrapper functions handle default parameter filling.
 
 - **v0.5.150** — Extend `js_closure_alloc` to accept and set arity parameter (3rd arg). Updated all call sites across expr.rs, object.rs, promise.rs, thread.rs, fs.rs, and sqlite.rs to pass computed arity or 0 for bound methods/callbacks. Now all dynamically-allocated closures preserve their arity field from creation.
 

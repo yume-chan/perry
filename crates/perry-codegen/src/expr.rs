@@ -863,13 +863,11 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
 
                         if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
                             let blk = ctx.block();
-                            // Load the scope pointer from its stack slot
-                            let scope_ptr = blk.load(crate::types::I64, &scope_ptr_slot);
                             // Write the variable to the scope object
                             let var_index_str = var_index.to_string();
                             blk.call_void(
                                 "js_scope_object_set_f64",
-                                &[(crate::types::I64, &scope_ptr), (I32, &var_index_str), (DOUBLE, &v)],
+                                &[(crate::types::I64, &scope_ptr_slot), (I32, &var_index_str), (DOUBLE, &v)],
                             );
                             return Ok(v);
                         }

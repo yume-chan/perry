@@ -253,7 +253,7 @@ pub unsafe extern "C" fn js_fastify_register(app_handle: Handle, plugin: i64, op
     };
 
     // Call the plugin — async functions run the body synchronously and return a Promise
-    perry_runtime::js_closure_call2(raw_closure_ptr, 2, nanboxed_main, opts);
+    perry_runtime::js_closure_call2(raw_closure_ptr, nanboxed_main, opts);
 
     // Flush the microtask queue (in case any async work was deferred)
     perry_runtime::js_promise_run_microtasks();

@@ -653,7 +653,7 @@ pub unsafe extern "C" fn js_net_process_pending() -> i32 {
             PendingNetEvent::Connect(id) => {
                 for cb in listeners_for(id, "connect") {
                     if cb != 0 {
-                        js_closure_call0(cb as *const ClosureHeader, 0);
+                        js_closure_call0(cb as *const ClosureHeader);
                     }
                 }
             }
@@ -674,7 +674,7 @@ pub unsafe extern "C" fn js_net_process_pending() -> i32 {
                 let buf_f64 = f64::from_bits(JSValue::pointer(buf as *const u8).bits());
                 for cb in cbs {
                     if cb != 0 {
-                        js_closure_call1(cb as *const ClosureHeader, 1, buf_f64);
+                        js_closure_call1(cb as *const ClosureHeader, buf_f64);
                     }
                 }
             }
@@ -690,14 +690,14 @@ pub unsafe extern "C" fn js_net_process_pending() -> i32 {
                 );
                 for cb in cbs {
                     if cb != 0 {
-                        js_closure_call1(cb as *const ClosureHeader, 1, s_f64);
+                        js_closure_call1(cb as *const ClosureHeader, s_f64);
                     }
                 }
             }
             PendingNetEvent::Close(id) => {
                 for cb in listeners_for(id, "close") {
                     if cb != 0 {
-                        js_closure_call0(cb as *const ClosureHeader, 0);
+                        js_closure_call0(cb as *const ClosureHeader);
                     }
                 }
                 NET_LISTENERS.lock().unwrap().remove(&id);

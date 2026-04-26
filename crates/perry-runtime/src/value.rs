@@ -1593,7 +1593,7 @@ pub extern "C" fn js_dynamic_array_find(arr_value: f64, callback: *const crate::
         let length = js_dynamic_array_length(arr_value);
         for i in 0..length {
             let element = js_dynamic_array_get(arr_value, i);
-            let result = unsafe { crate::closure::js_closure_call1(callback, 1, element) };
+            let result = unsafe { crate::closure::js_closure_call1(callback, element) };
             // Proper truthy check: handles NaN-boxed booleans
             if js_is_truthy(result) != 0 {
                 return element;
@@ -1624,7 +1624,7 @@ pub extern "C" fn js_dynamic_array_findIndex(arr_value: f64, callback: *const cr
         let length = js_dynamic_array_length(arr_value);
         for i in 0..length {
             let element = js_dynamic_array_get(arr_value, i);
-            let result = unsafe { crate::closure::js_closure_call1(callback, 1, element) };
+            let result = unsafe { crate::closure::js_closure_call1(callback, element) };
             // Proper truthy check: handles NaN-boxed booleans
             if js_is_truthy(result) != 0 {
                 return i as f64;

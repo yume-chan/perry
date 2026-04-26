@@ -189,7 +189,7 @@ unsafe fn call_closure_1(handler_bits: u64, arg: f64) -> f64 {
     if closure_ptr.is_null() {
         return f64::from_bits(JSValue::undefined().bits());
     }
-    crate::closure::js_closure_call1(closure_ptr, 1, arg)
+    crate::closure::js_closure_call1(closure_ptr, arg)
 }
 
 // ============================================================================

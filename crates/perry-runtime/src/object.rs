@@ -1596,7 +1596,7 @@ pub extern "C" fn js_object_set_field_by_index(obj: *mut ObjectHeader, key: *con
                         if acc.set != 0 {
                             let closure = (acc.set & crate::value::POINTER_MASK) as *const crate::closure::ClosureHeader;
                             if !closure.is_null() {
-                                crate::closure::js_closure_call1(closure, 1, value);
+                                crate::closure::js_closure_call1(closure, value);
                             }
                         }
                         return;
@@ -2094,7 +2094,7 @@ pub extern "C" fn js_object_get_field_by_name(obj: *const ObjectHeader, key: *co
                         if acc.get != 0 {
                             let closure = (acc.get & crate::value::POINTER_MASK) as *const crate::closure::ClosureHeader;
                             if !closure.is_null() {
-                                let result_f64 = crate::closure::js_closure_call0(closure, 0);
+                                let result_f64 = crate::closure::js_closure_call0(closure);
                                 return JSValue::from_bits(result_f64.to_bits());
                             }
                         }
@@ -2133,7 +2133,7 @@ pub extern "C" fn js_object_get_field_by_name(obj: *const ObjectHeader, key: *co
                                 if acc.get != 0 {
                                     let closure = (acc.get & crate::value::POINTER_MASK) as *const crate::closure::ClosureHeader;
                                     if !closure.is_null() {
-                                        let result_f64 = crate::closure::js_closure_call0(closure, 0);
+                                        let result_f64 = crate::closure::js_closure_call0(closure);
                                         return JSValue::from_bits(result_f64.to_bits());
                                     }
                                 }
@@ -2476,7 +2476,7 @@ pub extern "C" fn js_object_set_field_by_name(obj: *mut ObjectHeader, key: *cons
                                 if acc.set != 0 {
                                     let closure = (acc.set & crate::value::POINTER_MASK) as *const crate::closure::ClosureHeader;
                                     if !closure.is_null() {
-                                        crate::closure::js_closure_call1(closure, 1, value);
+                                        crate::closure::js_closure_call1(closure, value);
                                     }
                                 }
                                 return;
@@ -4333,7 +4333,7 @@ pub extern "C" fn js_object_group_by(
 
         for i in 0..length {
             let item = *elements.add(i);
-            let key_val = crate::closure::js_closure_call2(callback, 2, item, i as f64);
+            let key_val = crate::closure::js_closure_call2(callback, item, i as f64);
             // Coerce the key to a UTF-8 String.
             let key_ptr = crate::builtins::js_string_coerce(key_val);
             let key_string = if key_ptr.is_null() {

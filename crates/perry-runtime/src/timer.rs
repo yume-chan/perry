@@ -220,7 +220,7 @@ pub extern "C" fn js_callback_timer_tick() -> i32 {
     for timer in expired {
         if !timer.cleared {
             unsafe {
-                js_closure_call0(timer.callback as *const crate::closure::ClosureHeader, 0);
+                js_closure_call0(timer.callback as *const crate::closure::ClosureHeader);
             }
             fired += 1;
         }
@@ -369,7 +369,7 @@ pub extern "C" fn js_interval_timer_tick() -> i32 {
     // Call the callbacks outside of the lock
     for callback in callbacks_to_call {
         unsafe {
-            js_closure_call0(callback as *const crate::closure::ClosureHeader, 0);
+            js_closure_call0(callback as *const crate::closure::ClosureHeader);
         }
         fired += 1;
     }

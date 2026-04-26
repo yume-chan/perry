@@ -1064,7 +1064,7 @@ pub unsafe extern "C" fn js_ws_process_pending() -> i32 {
                 for cb in listeners {
                     if cb != 0 {
                         let closure = cb as *const ClosureHeader;
-                        js_closure_call1(closure, 1, client_handle_f64);
+                        js_closure_call1(closure, client_handle_f64);
                     }
                 }
             }
@@ -1087,7 +1087,7 @@ pub unsafe extern "C" fn js_ws_process_pending() -> i32 {
                     for cb in listeners {
                         if cb != 0 {
                             let closure = cb as *const ClosureHeader;
-                            js_closure_call1(closure, 1, msg_f64);
+                            js_closure_call1(closure, msg_f64);
                         }
                     }
                 } else {
@@ -1102,7 +1102,7 @@ pub unsafe extern "C" fn js_ws_process_pending() -> i32 {
                         for cb in server_listeners {
                             if cb != 0 {
                                 let closure = cb as *const ClosureHeader;
-                                js_closure_call2(closure, 2, client_handle_f64, msg_f64);
+                                js_closure_call2(closure, client_handle_f64, msg_f64);
                             }
                         }
                     }
@@ -1120,7 +1120,7 @@ pub unsafe extern "C" fn js_ws_process_pending() -> i32 {
                     for cb in listeners {
                         if cb != 0 {
                             let closure = cb as *const ClosureHeader;
-                            js_closure_call0(closure, 0);
+                            js_closure_call0(closure);
                         }
                     }
                 } else {
@@ -1134,7 +1134,7 @@ pub unsafe extern "C" fn js_ws_process_pending() -> i32 {
                         for cb in server_listeners {
                             if cb != 0 {
                                 let closure = cb as *const ClosureHeader;
-                                js_closure_call1(closure, 1, client_handle_f64);
+                                js_closure_call1(closure, client_handle_f64);
                             }
                         }
                     }
@@ -1160,7 +1160,7 @@ pub unsafe extern "C" fn js_ws_process_pending() -> i32 {
                     for cb in listeners {
                         if cb != 0 {
                             let closure = cb as *const ClosureHeader;
-                            js_closure_call1(closure, 1, err_f64);
+                            js_closure_call1(closure, err_f64);
                         }
                     }
                 } else {
@@ -1174,7 +1174,7 @@ pub unsafe extern "C" fn js_ws_process_pending() -> i32 {
                         for cb in server_listeners {
                             if cb != 0 {
                                 let closure = cb as *const ClosureHeader;
-                                js_closure_call2(closure, 2, client_handle_f64, err_f64);
+                                js_closure_call2(closure, client_handle_f64, err_f64);
                             }
                         }
                     }
@@ -1193,7 +1193,7 @@ pub unsafe extern "C" fn js_ws_process_pending() -> i32 {
                 for cb in listeners {
                     if cb != 0 {
                         let closure = cb as *const ClosureHeader;
-                        js_closure_call1(closure, 1, err_f64);
+                        js_closure_call1(closure, err_f64);
                     }
                 }
             }
@@ -1205,7 +1205,7 @@ pub unsafe extern "C" fn js_ws_process_pending() -> i32 {
                 for cb in listeners {
                     if cb != 0 {
                         let closure = cb as *const ClosureHeader;
-                        js_closure_call0(closure, 0);
+                        js_closure_call0(closure);
                     }
                 }
             }

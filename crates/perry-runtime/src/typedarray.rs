@@ -429,7 +429,7 @@ pub extern "C" fn js_typed_array_to_sorted_with_comparator(
         let len = (*ta).length as usize;
         let mut buf: Vec<f64> = (0..len).map(|i| load_at(ta, i)).collect();
         buf.sort_by(|a, b| {
-            let r = crate::closure::js_closure_call2(comparator, 2, *a, *b);
+            let r = crate::closure::js_closure_call2(comparator, *a, *b);
             if r < 0.0 {
                 std::cmp::Ordering::Less
             } else if r > 0.0 {
@@ -491,7 +491,7 @@ pub extern "C" fn js_typed_array_find_last(
         let len = (*ta).length as usize;
         for i in (0..len).rev() {
             let v = load_at(ta, i);
-            let r = crate::closure::js_closure_call2(callback, 2, v, i as f64);
+            let r = crate::closure::js_closure_call2(callback, v, i as f64);
             if crate::value::js_is_truthy(r) != 0 {
                 return v;
             }
@@ -514,7 +514,7 @@ pub extern "C" fn js_typed_array_find_last_index(
         let len = (*ta).length as usize;
         for i in (0..len).rev() {
             let v = load_at(ta, i);
-            let r = crate::closure::js_closure_call2(callback, 2, v, i as f64);
+            let r = crate::closure::js_closure_call2(callback, v, i as f64);
             if crate::value::js_is_truthy(r) != 0 {
                 return i as f64;
             }

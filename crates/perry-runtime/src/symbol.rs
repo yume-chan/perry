@@ -581,7 +581,7 @@ pub unsafe extern "C" fn js_to_primitive(value: f64, hint: i32) -> f64 {
     };
     let hint_ptr = js_string_from_bytes(hint_str.as_ptr(), hint_str.len() as u32);
     let hint_f64 = f64::from_bits(STRING_TAG | (hint_ptr as u64 & POINTER_MASK));
-    let result = crate::closure::js_closure_call1(closure_ptr, 1, hint_f64);
+    let result = crate::closure::js_closure_call1(closure_ptr, hint_f64);
     // Spec says the return value must be a primitive; if it's still an
     // object pointer, that's a TypeError in JS, but we just return it
     // as-is and let the caller fall back.

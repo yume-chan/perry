@@ -54,7 +54,7 @@ pub extern "C" fn backOff(
 
     // Call the function once - for async callbacks (which return Promises),
     // we just pass through the Promise. The caller will await it.
-    let result = unsafe { js_closure_call0(fn_ptr, 0) };
+    let result = unsafe { js_closure_call0(fn_ptr) };
 
     // Check if the result is a NaN-boxed pointer (Promise, object, etc.)
     let bits = result.to_bits();
@@ -106,7 +106,7 @@ pub extern "C" fn backOff(
         thread::sleep(Duration::from_millis(current_delay));
 
         // Call the function again
-        let result = unsafe { js_closure_call0(fn_ptr, 0) };
+        let result = unsafe { js_closure_call0(fn_ptr) };
 
         let bits = result.to_bits();
         let tag = bits >> 48;
@@ -149,7 +149,7 @@ pub extern "C" fn js_backoff_simple(
         attempt += 1;
 
         // Call the function
-        let result = unsafe { js_closure_call0(fn_ptr, 0) };
+        let result = unsafe { js_closure_call0(fn_ptr) };
 
         // Success if valid result
         if is_valid_result(result) {

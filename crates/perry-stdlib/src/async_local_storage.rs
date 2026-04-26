@@ -42,7 +42,7 @@ pub unsafe extern "C" fn js_async_local_storage_run(
     }
 
     let result = if callback != 0 {
-        js_closure_call0(callback as *const perry_runtime::ClosureHeader, 0)
+        js_closure_call0(callback as *const perry_runtime::ClosureHeader)
     } else {
         f64::from_bits(TAG_UNDEFINED)
     };
@@ -91,7 +91,7 @@ pub unsafe extern "C" fn js_async_local_storage_exit(
     };
 
     let result = if callback != 0 {
-        js_closure_call0(callback as *const perry_runtime::ClosureHeader, 0)
+        js_closure_call0(callback as *const perry_runtime::ClosureHeader)
     } else {
         f64::from_bits(TAG_UNDEFINED)
     };

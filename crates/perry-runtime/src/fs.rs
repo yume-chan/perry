@@ -873,7 +873,7 @@ fn write_stream_end_internal(closure: *const ClosureHeader, final_chunk: Option<
         let cb_ptr = extract_closure_ptr(cb);
         if !cb_ptr.is_null() {
             unsafe {
-                js_closure_call0(cb_ptr, 0);
+                js_closure_call0(cb_ptr);
             }
         }
     }
@@ -926,7 +926,7 @@ extern "C" fn write_stream_on_impl(
         let cb_ptr = extract_closure_ptr(cb);
         if !cb_ptr.is_null() {
             unsafe {
-                js_closure_call0(cb_ptr, 0);
+                js_closure_call0(cb_ptr);
             }
         }
     }
@@ -939,7 +939,7 @@ extern "C" fn write_stream_on_impl(
                 let err_str = js_string_from_bytes(msg_bytes.as_ptr(), msg_bytes.len() as u32);
                 let err_obj = crate::error::js_error_new_with_message(err_str);
                 let err_val = crate::value::js_nanbox_pointer(err_obj as i64);
-                js_closure_call1(cb_ptr, 1, err_val);
+                js_closure_call1(cb_ptr, err_val);
             }
         }
     }
@@ -997,7 +997,7 @@ extern "C" fn read_stream_on_impl(
                     let chunk_val = f64::from_bits(
                         crate::value::js_nanbox_string(chunk as i64).to_bits(),
                     );
-                    js_closure_call1(cb_ptr, 1, chunk_val);
+                    js_closure_call1(cb_ptr, chunk_val);
                 }
             }
         }
@@ -1008,7 +1008,7 @@ extern "C" fn read_stream_on_impl(
             let cb_ptr = extract_closure_ptr(cb);
             if !cb_ptr.is_null() {
                 unsafe {
-                    js_closure_call0(cb_ptr, 0);
+                    js_closure_call0(cb_ptr);
                 }
             }
         }
@@ -1022,7 +1022,7 @@ extern "C" fn read_stream_on_impl(
                             js_string_from_bytes(msg_bytes.as_ptr(), msg_bytes.len() as u32);
                         let err_obj = crate::error::js_error_new_with_message(err_str);
                         let err_val = crate::value::js_nanbox_pointer(err_obj as i64);
-                        js_closure_call1(cb_ptr, 1, err_val);
+                        js_closure_call1(cb_ptr, err_val);
                     }
                 }
             }
@@ -1205,7 +1205,7 @@ pub extern "C" fn js_fs_read_file_callback(
         let cb_bits = callback.to_bits();
         let cb_ptr = (cb_bits & 0x0000_FFFF_FFFF_FFFF) as *const ClosureHeader;
         if !cb_ptr.is_null() {
-            js_closure_call2(cb_ptr, 2, f64::from_bits(TAG_NULL), data_val);
+            js_closure_call2(cb_ptr, f64::from_bits(TAG_NULL), data_val);
         }
     }
     f64::from_bits(TAG_UNDEFINED)
