@@ -524,6 +524,26 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
                 // of TAG_UNDEFINED (a NaN that fails all numeric comparisons).
                 let lit = crate::nanbox::double_literal(*cv);
                 ctx.block().store(DOUBLE, &lit, &slot);
+            } else {
+                // No initializer: initialize scope object variable to undefined
+                if let Some(analysis) = &ctx.scope_capture_analysis {
+                    if let Some((scope_id, var_index)) = crate::scope_objects::get_scope_and_index(*id, analysis) {
+                        // Ensure the scope is allocated (lazy allocation for nested scopes)
+                        crate::scope_objects::ensure_scope_allocated(ctx, scope_id)?;
+
+                        if let Some(scope_ptr_slot) = ctx.scope_ptrs.get(&scope_id).cloned() {
+                            let undef = crate::nanbox::double_literal(f64::from_bits(
+                                crate::nanbox::TAG_UNDEFINED,
+                            ));
+                            let blk = ctx.block();
+                            let var_index_str = var_index.to_string();
+                            blk.call_void(
+                                "js_scope_object_set_f64",
+                                &[(crate::types::I64, &scope_ptr_slot), (I32, &var_index_str), (crate::types::DOUBLE, &undef)],
+                            );
+                        }
+                    }
+                }
             }
             Ok(())
         }
